@@ -1,30 +1,30 @@
 import express from 'express';
 import puppeteer from 'puppeteer';
+import https from 'https';
+import http from 'http';
+import { URL } from 'url';
+import fetch from 'node-fetch';
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = 3000;
 
-// Middleware per gestire CORS
+// CORS middleware globale
 app.use((req, res, next) => {
-  // Imposta l'header Access-Control-Allow-Origin con il dominio del tuo frontend
-  // oppure '*' per permettere a tutti i domini (sconsigliato per produzione)
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  
-  // Altri header CORS importanti
+  res.setHeader('Access-Control-Allow-Origin', '*'); // oppure metti solo 'http://localhost:5500' per sicurezza
   res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   next();
 });
 
-// Gestione delle richieste preflight OPTIONS
 app.options('*', (req, res) => {
   res.sendStatus(200);
 });
 
+// Estrazione del link .m3u8 principale da vixsrc
 app.get('/proxy/movie/:id', async (req, res) => {
   const { id } = req.params;
-
   let browser;
+
   try {
     browser = await puppeteer.launch({
       headless: true,
@@ -55,7 +55,10 @@ app.get('/proxy/movie/:id', async (req, res) => {
     });
 
     await browser.close();
-    res.json({ url: playlistUrl });
+
+    // Rispondi con link proxy
+    const proxyUrl = `https://vixproxy.onrender.com/stream?url=${encodeURIComponent(playlistUrl)}`;
+    res.json({ url: proxyUrl });
 
   } catch (err) {
     console.error("Errore nel proxy:", err);
@@ -64,6 +67,79 @@ app.get('/proxy/movie/:id', async (req, res) => {
   }
 });
 
+// Proxy universale per .m3u8, .ts, audio, sottotitoli
+app.get('/stream', async (req, res) => {
+  const targetUrl = req.query.url;
+  if (!targetUrl) return res.status(400).send('Missing url');
+
+  const isM3U8 = targetUrl.includes('.m3u8') || targetUrl.includes('playlist') || targetUrl.includes('master');
+
+  if (isM3U8) {
+    try {
+      const response = await fetch(targetUrl, {
+        headers: {
+          'Referer': 'https://vixsrc.to',
+          'User-Agent': 'Mozilla/5.0'
+        }
+      });
+
+      let text = await response.text();
+const baseUrl = targetUrl.split('/').slice(0, -1).join('/');
+
+const rewritten = text
+  // Riscrive gli URI AES come URI="..."
+  .replace(/URI="([^"]+)"/g, (match, uri) => {
+    const absoluteUrl = uri.startsWith('http')
+      ? uri
+      : uri.startsWith('/')
+        ? `https://vixsrc.to${uri}`
+        : `${baseUrl}/${uri}`;
+    return `URI="https://vixproxy.onrender.com/stream?url=${encodeURIComponent(absoluteUrl)}"`;
+  })
+  // Riscrive i segmenti .ts, .key o .m3u8 (righe non commentate)
+  .replace(/^([^\s#"][^\n\r"]+\.(ts|key|m3u8))$/gm, (match, file) => {
+    const abs = `${baseUrl}/${file}`;
+    return `https://vixproxy.onrender.com/stream?url=${encodeURIComponent(abs)}`;
+  })
+  // Riscrive URL assoluti
+  .replace(/(https?:\/\/[^\s\n"]+)/g, match =>
+    `https://vixproxy.onrender.com/stream?url=${encodeURIComponent(match)}`
+  );
+
+
+      res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
+      res.send(rewritten);
+
+    } catch (err) {
+      console.error('Errore fetch m3u8:', err);
+      res.status(500).send('Errore proxy m3u8');
+    }
+  } else {
+    try {
+      const urlObj = new URL(targetUrl);
+      const client = urlObj.protocol === 'https:' ? https : http;
+
+      const proxyReq = client.get(targetUrl, {
+        headers: {
+          'Referer': 'https://vixsrc.to',
+          'User-Agent': 'Mozilla/5.0'
+        }
+      }, proxyRes => {
+        res.writeHead(proxyRes.statusCode, proxyRes.headers);
+        proxyRes.pipe(res);
+      });
+
+      proxyReq.on('error', err => {
+        console.error('Errore segmenti:', err);
+        res.status(500).send('Errore proxy media');
+      });
+    } catch (err) {
+      console.error('URL invalido:', err);
+      res.status(400).send('URL invalido');
+    }
+  }
+});
+
 app.listen(PORT, () => {
-  console.log(`🎥 Proxy in ascolto`);
+  console.log(`🎥 Proxy video attivo su http://localhost:${PORT}`);
 });
