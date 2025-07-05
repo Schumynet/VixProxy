@@ -1,31 +1,76 @@
 import express from 'express';
+import puppeteer from 'puppeteer';
 import https from 'https';
 import http from 'http';
 import { URL } from 'url';
 import fetch from 'node-fetch';
-import cors from 'cors';
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = 3000;
 
-// Middleware CORS
-app.use(cors());
-
-// Endpoint di test
-app.get('/ping', (req, res) => {
-  res.send('pong');
+// CORS middleware globale
+app.use((req, res, next) => {
+  res.setHeader('Access-Control-Allow-Origin', '*'); // oppure metti solo 'http://localhost:5500' per sicurezza
+  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  next();
 });
 
-// Proxy per m3u8, ts, key, audio, subtitle
+app.options('*', (req, res) => {
+  res.sendStatus(200);
+});
+
+// Estrazione del link .m3u8 principale da vixsrc
+app.get('/proxy/movie/:id', async (req, res) => {
+  const { id } = req.params;
+  let browser;
+
+  try {
+    browser = await puppeteer.launch({
+      headless: true,
+      args: ['--no-sandbox', '--disable-setuid-sandbox']
+    });
+
+    const page = await browser.newPage();
+    await page.setExtraHTTPHeaders({ Referer: 'https://vixsrc.to' });
+
+    const playlistUrl = await new Promise(async (resolve, reject) => {
+      const timeout = setTimeout(() => reject('Timeout raggiunto'), 10000);
+
+      page.on('requestfinished', request => {
+        const url = request.url();
+        if (
+          url.includes('/playlist/') &&
+          url.includes('token=') &&
+          url.includes('h=1')
+        ) {
+          clearTimeout(timeout);
+          resolve(url);
+        }
+      });
+
+      await page.goto(`https://vixsrc.to/movie/${id}?lang=it`, {
+        waitUntil: 'domcontentloaded'
+      });
+    });
+
+    await browser.close();
+
+    // Rispondi con link proxy
+    const proxyUrl = `https://vixproxy.onrender.com/stream?url=${encodeURIComponent(playlistUrl)}`;
+    res.json({ url: proxyUrl });
+
+  } catch (err) {
+    console.error("Errore nel proxy:", err);
+    if (browser) await browser.close();
+    res.status(500).json({ error: 'Errore durante l\'estrazione del flusso' });
+  }
+});
+
+// Proxy universale per .m3u8, .ts, audio, sottotitoli
 app.get('/stream', async (req, res) => {
   const targetUrl = req.query.url;
-
-  if (!targetUrl) {
-    console.error('❌ Nessun parametro ?url=');
-    return res.status(400).send('Missing url param');
-  }
-
-  console.log('📥 Proxy richiesto per:', targetUrl);
+  if (!targetUrl) return res.status(400).send('Missing url');
 
   const isM3U8 = targetUrl.includes('.m3u8') || targetUrl.includes('playlist') || targetUrl.includes('master');
 
@@ -38,43 +83,38 @@ app.get('/stream', async (req, res) => {
         }
       });
 
-      if (!response.ok) {
-        console.error(`❌ Errore fetch ${targetUrl}:`, response.status);
-        return res.status(response.status).send('Errore nel fetch del manifest');
-      }
+      let text = await response.text();
+const baseUrl = targetUrl.split('/').slice(0, -1).join('/');
 
-      const text = await response.text();
-      const baseUrl = targetUrl.split('/').slice(0, -1).join('/');
+const rewritten = text
+  // Riscrive gli URI AES come URI="..."
+  .replace(/URI="([^"]+)"/g, (match, uri) => {
+    const absoluteUrl = uri.startsWith('http')
+      ? uri
+      : uri.startsWith('/')
+        ? `https://vixsrc.to${uri}`
+        : `${baseUrl}/${uri}`;
+    return `URI="https://vixproxy.onrender.com/stream?url=${encodeURIComponent(absoluteUrl)}"`;
+  })
+  // Riscrive i segmenti .ts, .key o .m3u8 (righe non commentate)
+  .replace(/^([^\s#"][^\n\r"]+\.(ts|key|m3u8))$/gm, (match, file) => {
+    const abs = `${baseUrl}/${file}`;
+    return `https://vixproxy.onrender.com/stream?url=${encodeURIComponent(abs)}`;
+  })
+  // Riscrive URL assoluti
+  .replace(/(https?:\/\/[^\s\n"]+)/g, match =>
+    `https://vixproxy.onrender.com/stream?url=${encodeURIComponent(match)}`
+  );
 
-      const rewritten = text
-        // Riscrivi URI delle chiavi AES
-        .replace(/URI="([^"]+)"/g, (match, uri) => {
-          const absoluteUrl = uri.startsWith('http')
-            ? uri
-            : uri.startsWith('/')
-              ? `https://vixsrc.to${uri}`
-              : `${baseUrl}/${uri}`;
-          return `URI="${getProxyUrl(absoluteUrl)}"`;
-        })
-        // Riscrivi file .ts, .key, .m3u8 relativi
-        .replace(/^([^\s#"][^\n\r"]+\.(ts|key|m3u8))$/gm, match => {
-          const abs = `${baseUrl}/${match}`;
-          return getProxyUrl(abs);
-        })
-        // Riscrivi URL assoluti
-        .replace(/(https?:\/\/[^\s\n"]+)/g, match =>
-          getProxyUrl(match)
-        );
 
       res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
       res.send(rewritten);
+
     } catch (err) {
-      console.error('❌ Errore proxy m3u8:', err);
+      console.error('Errore fetch m3u8:', err);
       res.status(500).send('Errore proxy m3u8');
     }
-
   } else {
-    // Segmenti .ts / audio / subtitles / enc.key
     try {
       const urlObj = new URL(targetUrl);
       const client = urlObj.protocol === 'https:' ? https : http;
@@ -90,22 +130,16 @@ app.get('/stream', async (req, res) => {
       });
 
       proxyReq.on('error', err => {
-        console.error('❌ Errore durante il proxy di segmenti:', err);
-        res.status(500).send('Errore segmenti');
+        console.error('Errore segmenti:', err);
+        res.status(500).send('Errore proxy media');
       });
-
     } catch (err) {
-      console.error('❌ URL invalido:', err);
+      console.error('URL invalido:', err);
       res.status(400).send('URL invalido');
     }
   }
 });
 
-function getProxyUrl(originalUrl) {
-  const proxyHost = 'https://vixproxy.onrender.com';
-  return `${proxyHost}/stream?url=${encodeURIComponent(originalUrl)}`;
-}
-
 app.listen(PORT, () => {
-  console.log(`🚀 Server avviato su porta ${PORT}`);
+  console.log(`🎥 Proxy video attivo su http://localhost:${PORT}`);
 });
