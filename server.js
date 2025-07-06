@@ -33,7 +33,7 @@ app.get('/proxy/series/:id/:season/:episode', async (req, res) => {
     const page = await browser.newPage();
     await page.setExtraHTTPHeaders({ Referer: 'https://vixsrc.to' });
 
-    const targetUrl = `https://vixsrc.to/serie/${id}/season/${season}/episode/${episode}?lang=it`;
+    const targetUrl = `https://vixsrc.to/tv/${id}/${season}/${episode}?lang=it`;
     console.log('🎬 Navigo a:', targetUrl);
 
     const playlistUrl = await new Promise(async (resolve, reject) => {
@@ -41,6 +41,7 @@ app.get('/proxy/series/:id/:season/:episode', async (req, res) => {
 
       page.on('requestfinished', request => {
         const url = request.url();
+        console.log("🔍 Intercettato:", url);
         if (url.includes('/playlist/') && url.includes('token=') && url.includes('h=1')) {
           clearTimeout(timeout);
           resolve(url);
@@ -61,6 +62,7 @@ app.get('/proxy/series/:id/:season/:episode', async (req, res) => {
     res.status(500).json({ error: 'Errore durante l\'estrazione dell\'episodio' });
   }
 });
+
 
 // Estrazione del link .m3u8 principale da vixsrc
 app.get('/proxy/movie/:id', async (req, res) => {
