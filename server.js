@@ -19,6 +19,48 @@ app.use((req, res, next) => {
 app.options('*', (req, res) => {
   res.sendStatus(200);
 });
+app.get('/proxy/series/:id/:season/:episode', async (req, res) => {
+  const { id, season, episode } = req.params;
+  let browser;
+
+  try {
+    browser = await puppeteer.launch({
+      headless: true,
+      executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
+      args: ['--no-sandbox', '--disable-setuid-sandbox']
+    });
+
+    const page = await browser.newPage();
+    await page.setExtraHTTPHeaders({ Referer: 'https://vixsrc.to' });
+
+    const targetUrl = `https://vixsrc.to/serie/${id}/season/${season}/episode/${episode}?lang=it`;
+    console.log('🎬 Navigo a:', targetUrl);
+
+    const playlistUrl = await new Promise(async (resolve, reject) => {
+      const timeout = setTimeout(() => reject('Timeout raggiunto'), 10000);
+
+      page.on('requestfinished', request => {
+        const url = request.url();
+        if (url.includes('/playlist/') && url.includes('token=') && url.includes('h=1')) {
+          clearTimeout(timeout);
+          resolve(url);
+        }
+      });
+
+      await page.goto(targetUrl, { waitUntil: 'domcontentloaded' });
+    });
+
+    await browser.close();
+
+    const proxyUrl = getProxyUrl(playlistUrl);
+    res.json({ url: proxyUrl });
+
+  } catch (err) {
+    console.error('❌ Errore nel proxy serie TV:', err);
+    if (browser) await browser.close();
+    res.status(500).json({ error: 'Errore durante l\'estrazione dell\'episodio' });
+  }
+});
 
 // Estrazione del link .m3u8 principale da vixsrc
 app.get('/proxy/movie/:id', async (req, res) => {
