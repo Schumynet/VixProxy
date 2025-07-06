@@ -1,13 +1,21 @@
 {
-  "name": "vixsrc-proxy",
+  "name": "vix-proxy",
   "version": "1.0.0",
-  "main": "server.js",
+  "description": "Proxy server per flussi HLS da vixsrc.to",
   "type": "module",
+  "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
   "dependencies": {
+    "cors": "^2.8.5",
     "express": "^4.18.2",
-    "puppeteer": "^22.0.0"
-  }
+    "node-fetch": "^3.3.2"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "keywords": ["node", "proxy", "hls", "fly.io", "vix", "m3u8"],
+  "author": "Lele",
+  "license": "MIT"
 }
