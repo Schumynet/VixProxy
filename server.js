@@ -1,12 +1,18 @@
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import { dirname } from 'path';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
 import express from 'express';
 import puppeteer from 'puppeteer';
 import https from 'https';
 import http from 'http';
-import { URL } from 'url';
 import fetch from 'node-fetch';
 import axios from 'axios';
-import fs from 'fs';
-import path from 'path';
+
 const app = express();
 const PORT = 3000;
 
