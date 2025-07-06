@@ -4,7 +4,9 @@ import https from 'https';
 import http from 'http';
 import { URL } from 'url';
 import fetch from 'node-fetch';
-
+import axios from 'axios';
+import fs from 'fs';
+import path from 'path';
 const app = express();
 const PORT = 3000;
 
@@ -22,6 +24,37 @@ app.options('*', (req, res) => {
 function getProxyUrl(originalUrl) {
   return `https://vixproxy.fly.dev/stream?url=${encodeURIComponent(originalUrl)}`;
 }
+
+
+
+const TMDB_API_KEY = '1e8c9083f94c62dd66fb2105cd7b613b'; // Inserisci qui la tua chiave TMDb
+
+app.get('/home/trending', async (req, res) => {
+  try {
+    // Leggi i database VixSRC
+    const rawMovies = JSON.parse(fs.readFileSync(path.join(__dirname, 'vix-movies-ids.json')));
+    const rawTV = JSON.parse(fs.readFileSync(path.join(__dirname, 'vix-tv-ids.json')));
+    const vixMovieIds = new Set(rawMovies.map(e => e.tmdb_id));
+    const vixTVIds = new Set(rawTV.map(e => e.tmdb_id));
+
+    // Prendi trending da TMDb
+    const [moviesRes, tvRes] = await Promise.all([
+      axios.get(`https://api.themoviedb.org/3/trending/movie/day?language=it-IT&api_key=${TMDB_API_KEY}`),
+      axios.get(`https://api.themoviedb.org/3/trending/tv/day?language=it-IT&api_key=${TMDB_API_KEY}`)
+    ]);
+
+    // Filtra quelli presenti su VixSRC
+    const movies = (moviesRes.data.results || []).filter(movie => vixMovieIds.has(movie.id));
+    const tv = (tvRes.data.results || []).filter(show => vixTVIds.has(show.id));
+
+    res.json({ movies, tv });
+
+  } catch (err) {
+    console.error('❌ Errore nel caricamento trending:', err);
+    res.status(500).json({ error: 'Errore nel caricamento contenuti trending' });
+  }
+});
+
 
 app.get('/proxy/series/:id/:season/:episode', async (req, res) => {
   const { id, season, episode } = req.params;
