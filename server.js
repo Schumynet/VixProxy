@@ -140,6 +140,7 @@ const rewritten = text
   }
 });
 
-app.listen(PORT, () => {
-  console.log(`🎥 Proxy video attivo su http://localhost:${PORT}`);
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`🚀 Server avviato su 0.0.0.0:${PORT}`);
 });
+
