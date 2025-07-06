@@ -19,6 +19,10 @@ app.use((req, res, next) => {
 app.options('*', (req, res) => {
   res.sendStatus(200);
 });
+function getProxyUrl(originalUrl) {
+  return `https://vixproxy.fly.dev/stream?url=${encodeURIComponent(originalUrl)}`;
+}
+
 app.get('/proxy/series/:id/:season/:episode', async (req, res) => {
   const { id, season, episode } = req.params;
   let browser;
