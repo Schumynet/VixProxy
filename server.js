@@ -28,7 +28,7 @@ app.options('*', (req, res) => {
   res.sendStatus(200);
 });
 function getProxyUrl(originalUrl) {
-  return `https://vixproxy.fly.dev/stream?url=${encodeURIComponent(originalUrl)}`;
+  return `https://vixproxy.onrender.com/stream?url=${encodeURIComponent(originalUrl)}`;
 }
 
 
@@ -144,7 +144,7 @@ app.get('/proxy/movie/:id', async (req, res) => {
     await browser.close();
 
     // Rispondi con link proxy
-    const proxyUrl = `https://vixproxy.fly.dev/stream?url=${encodeURIComponent(playlistUrl)}`;
+    const proxyUrl = `https://vixproxy.onrender.com/stream?url=${encodeURIComponent(playlistUrl)}`;
     res.json({ url: proxyUrl });
 
   } catch (err) {
@@ -181,16 +181,16 @@ const rewritten = text
       : uri.startsWith('/')
         ? `https://vixsrc.to${uri}`
         : `${baseUrl}/${uri}`;
-    return `URI="https://vixproxy.fly.dev/stream?url=${encodeURIComponent(absoluteUrl)}"`;
+    return `URI="https://vixproxy.onrender.com/stream?url=${encodeURIComponent(absoluteUrl)}"`;
   })
   // Riscrive i segmenti .ts, .key o .m3u8 (righe non commentate)
   .replace(/^([^\s#"][^\n\r"]+\.(ts|key|m3u8))$/gm, (match, file) => {
     const abs = `${baseUrl}/${file}`;
-    return `https://vixproxy.fly.dev/stream?url=${encodeURIComponent(abs)}`;
+    return `https://vixproxy.onrender.com/stream?url=${encodeURIComponent(abs)}`;
   })
   // Riscrive URL assoluti
   .replace(/(https?:\/\/[^\s\n"]+)/g, match =>
-    `https://vixproxy.fly.dev/stream?url=${encodeURIComponent(match)}`
+    `https://vixproxy.onrender.com/stream?url=${encodeURIComponent(match)}`
   );
 
 
