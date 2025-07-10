@@ -56,96 +56,101 @@ app.get('/home/trending', async (req, res) => {
   }
 });
 
-
-app.get('/proxy/series/:id/:season/:episode', async (req, res) => {
-  const { id, season, episode } = req.params;
-  let browser;
-
-  try {
-    browser = await puppeteer.launch({
-      headless: true,
-      executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
-      args: ['--no-sandbox', '--disable-setuid-sandbox']
-    });
-
-    const page = await browser.newPage();
-    await page.setExtraHTTPHeaders({ Referer: 'https://vixsrc.to' });
-
-    const targetUrl = `https://vixsrc.to/tv/${id}/${season}/${episode}?lang=it`;
-    console.log('🎬 Navigo a:', targetUrl);
-
-    const playlistUrl = await new Promise(async (resolve, reject) => {
-      const timeout = setTimeout(() => reject('Timeout raggiunto'), 10000);
-
-      page.on('requestfinished', request => {
-        const url = request.url();
-        if (url.includes('/playlist/') && url.includes('token=') && url.includes('h=1')) {
-          console.log("🔍 Intercettato:", url);
-          clearTimeout(timeout);
-          resolve(url);
-        }
-      });
-
-      await page.goto(targetUrl, { waitUntil: 'domcontentloaded' });
-    });
-
-    await browser.close();
-    res.json({ url: playlistUrl });
-
-  } catch (err) {
-    console.error('❌ Errore nel proxy serie TV:', err);
-    if (browser) await browser.close();
-    res.status(500).json({ error: 'Errore durante l\'estrazione dell\'episodio' });
-  }
-});
-
-
-// Estrazione del link .m3u8 principale da vixsrc
 app.get('/proxy/movie/:id', async (req, res) => {
   const { id } = req.params;
   let browser;
 
   try {
+    // 1. Configurazione avanzata di Puppeteer
     browser = await puppeteer.launch({
       headless: true,
-      args: ['--no-sandbox', '--disable-setuid-sandbox']
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-web-security',
+        '--disable-features=IsolateOrigins,site-per-process'
+      ],
+      executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined
     });
 
     const page = await browser.newPage();
-    await page.setExtraHTTPHeaders({ Referer: 'https://vixsrc.to' });
+    
+    // 2. Imposta headers più realistici
+    await page.setExtraHTTPHeaders({
+      'Referer': 'https://vixsrc.to',
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+      'Accept-Language': 'it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7'
+    });
 
+    // 3. Simula comportamento umano
+    await page.setViewport({ width: 1366, height: 768 });
+    await page.evaluateOnNewDocument(() => {
+      Object.defineProperty(navigator, 'webdriver', { get: () => false });
+    });
+
+    const targetUrl = `https://vixsrc.to/movie/${id}?lang=it`;
+    console.log('Navigating to:', targetUrl);
+
+    // 4. Aggiungi ritardi casuali e gestione più robusta
     const playlistUrl = await new Promise(async (resolve, reject) => {
-      const timeout = setTimeout(() => reject('Timeout raggiunto'), 10000);
+      const timeout = setTimeout(() => reject('Timeout reached'), 20000);
 
-      page.on('requestfinished', request => {
+      page.on('requestfinished', async (request) => {
         const url = request.url();
-        if (
-          url.includes('/playlist/') &&
-          url.includes('token=') &&
-          url.includes('h=1')
-        ) {
+        if (url.includes('/playlist/') && url.includes('token=') && url.includes('h=1')) {
+          console.log("Found playlist URL:", url);
+          
+          // 5. Estrai i cookie correnti
+          const cookies = await page.cookies();
+          const cookieHeader = cookies.map(c => `${c.name}=${c.value}`).join('; ');
+          
           clearTimeout(timeout);
-          resolve(url);
+          resolve({
+            url: url,
+            headers: {
+              'Cookie': cookieHeader,
+              'Referer': 'https://vixsrc.to',
+              'User-Agent': 'Mozilla/5.0',
+              'X-Requested-With': 'XMLHttpRequest'
+            }
+          });
         }
       });
 
-      await page.goto(`https://vixsrc.to/movie/${id}?lang=it`, {
-        waitUntil: 'domcontentloaded'
-      });
+      try {
+        await page.goto(targetUrl, {
+          waitUntil: 'networkidle2',
+          timeout: 20000
+        });
+        
+        // 6. Attendi ulteriormente per sicurezza
+        await page.waitForTimeout(2000);
+      } catch (err) {
+        console.error('Navigation error:', err);
+        reject(err);
+      }
     });
 
     await browser.close();
 
-    // Rispondi con link proxy
-    res.json({ url: playlistUrl });
+    // 7. Invia sia l'URL che gli headers necessari
+    res.json({
+      url: playlistUrl.url,
+      headers: playlistUrl.headers,
+      instructions: "Use these headers when requesting the playlist URL"
+    });
 
   } catch (err) {
-    console.error("Errore nel proxy:", err);
+    console.error("Full error:", err);
     if (browser) await browser.close();
-    res.status(500).json({ error: 'Errore durante l\'estrazione del flusso' });
+    res.status(500).json({ 
+      error: 'Error during scraping',
+      details: err.message,
+      solution: "The site might have upgraded its anti-bot protection. Try using a residential proxy or different IP."
+    });
   }
 });
-
 
 
 app.listen(PORT, '0.0.0.0', () => {
