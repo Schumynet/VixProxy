@@ -18,7 +18,7 @@ const PORT = 3000;
 
 // CORS middleware globale
 app.use((req, res, next) => {
-  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Origin', '*'); // oppure metti solo 'http://localhost:5500' per sicurezza
   res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   next();
@@ -27,42 +27,52 @@ app.use((req, res, next) => {
 app.options('*', (req, res) => {
   res.sendStatus(200);
 });
-
-// 🔁 Usa l'Android come proxy per lo stream
 function getProxyUrl(originalUrl) {
   return `http://192.168.1.8:3000/stream?url=${encodeURIComponent(originalUrl)}`;
 }
 
-const TMDB_API_KEY = '1e8c9083f94c62dd66fb2105cd7b613b';
+
+
+const TMDB_API_KEY = '1e8c9083f94c62dd66fb2105cd7b613b'; // Inserisci qui la tua chiave TMDb
 
 app.get('/home/trending', async (req, res) => {
   try {
+    // Leggi i database VixSRC
     const rawMovies = JSON.parse(fs.readFileSync(path.join(__dirname, 'vix-movies-ids.json')));
     const rawTV = JSON.parse(fs.readFileSync(path.join(__dirname, 'vix-tv-ids.json')));
     const vixMovieIds = new Set(rawMovies.map(e => e.tmdb_id));
     const vixTVIds = new Set(rawTV.map(e => e.tmdb_id));
 
+    // Prendi trending da TMDb
     const [moviesRes, tvRes] = await Promise.all([
       axios.get(`https://api.themoviedb.org/3/trending/movie/day?language=it-IT&api_key=${TMDB_API_KEY}`),
       axios.get(`https://api.themoviedb.org/3/trending/tv/day?language=it-IT&api_key=${TMDB_API_KEY}`)
     ]);
 
+    // Filtra quelli presenti su VixSRC
     const movies = (moviesRes.data.results || []).filter(movie => vixMovieIds.has(movie.id));
     const tv = (tvRes.data.results || []).filter(show => vixTVIds.has(show.id));
 
     res.json({ movies, tv });
+
   } catch (err) {
     console.error('❌ Errore nel caricamento trending:', err);
     res.status(500).json({ error: 'Errore nel caricamento contenuti trending' });
   }
 });
 
+
 app.get('/proxy/series/:id/:season/:episode', async (req, res) => {
   const { id, season, episode } = req.params;
   let browser;
 
   try {
-    browser = await puppeteer.launch({ headless: true, executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined, args: ['--no-sandbox', '--disable-setuid-sandbox'] });
+    browser = await puppeteer.launch({
+      headless: true,
+      executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
+      args: ['--no-sandbox', '--disable-setuid-sandbox']
+    });
+
     const page = await browser.newPage();
     await page.setExtraHTTPHeaders({ Referer: 'https://vixsrc.to' });
 
@@ -85,6 +95,7 @@ app.get('/proxy/series/:id/:season/:episode', async (req, res) => {
     });
 
     await browser.close();
+
     const proxyUrl = getProxyUrl(playlistUrl);
     res.json({ url: proxyUrl });
 
@@ -95,12 +106,18 @@ app.get('/proxy/series/:id/:season/:episode', async (req, res) => {
   }
 });
 
+
+// Estrazione del link .m3u8 principale da vixsrc
 app.get('/proxy/movie/:id', async (req, res) => {
   const { id } = req.params;
   let browser;
 
   try {
-    browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox'] });
+    browser = await puppeteer.launch({
+      headless: true,
+      args: ['--no-sandbox', '--disable-setuid-sandbox']
+    });
+
     const page = await browser.newPage();
     await page.setExtraHTTPHeaders({ Referer: 'https://vixsrc.to' });
 
@@ -109,17 +126,25 @@ app.get('/proxy/movie/:id', async (req, res) => {
 
       page.on('requestfinished', request => {
         const url = request.url();
-        if (url.includes('/playlist/') && url.includes('token=') && url.includes('h=1')) {
+        if (
+          url.includes('/playlist/') &&
+          url.includes('token=') &&
+          url.includes('h=1')
+        ) {
           clearTimeout(timeout);
           resolve(url);
         }
       });
 
-      await page.goto(`https://vixsrc.to/movie/${id}?lang=it`, { waitUntil: 'domcontentloaded' });
+      await page.goto(`https://vixsrc.to/movie/${id}?lang=it`, {
+        waitUntil: 'domcontentloaded'
+      });
     });
 
     await browser.close();
-    const proxyUrl = getProxyUrl(playlistUrl);
+
+    // Rispondi con link proxy
+    const proxyUrl = `http://192.168.1.8:3000/stream?url=${encodeURIComponent(playlistUrl)}`;
     res.json({ url: proxyUrl });
 
   } catch (err) {
@@ -129,6 +154,7 @@ app.get('/proxy/movie/:id', async (req, res) => {
   }
 });
 
+// Proxy universale per .m3u8, .ts, audio, sottotitoli
 app.get('/stream', async (req, res) => {
   const targetUrl = req.query.url;
   if (!targetUrl) return res.status(400).send('Missing url');
@@ -145,18 +171,28 @@ app.get('/stream', async (req, res) => {
       });
 
       let text = await response.text();
-      const baseUrl = targetUrl.split('/').slice(0, -1).join('/');
+const baseUrl = targetUrl.split('/').slice(0, -1).join('/');
 
-      const rewritten = text
-        .replace(/URI="([^"]+)"/g, (match, uri) => {
-          const absoluteUrl = uri.startsWith('http') ? uri : uri.startsWith('/') ? `https://vixsrc.to${uri}` : `${baseUrl}/${uri}`;
-          return `URI="${getProxyUrl(absoluteUrl)}"`;
-        })
-        .replace(/^([^\s#"][^\n\r"]+\.(ts|key|m3u8))$/gm, (match, file) => {
-          const abs = `${baseUrl}/${file}`;
-          return getProxyUrl(abs);
-        })
-        .replace(/(https?:\/\/[^\s\n"]+)/g, match => getProxyUrl(match));
+const rewritten = text
+  // Riscrive gli URI AES come URI="..."
+  .replace(/URI="([^"]+)"/g, (match, uri) => {
+    const absoluteUrl = uri.startsWith('http')
+      ? uri
+      : uri.startsWith('/')
+        ? `https://vixsrc.to${uri}`
+        : `${baseUrl}/${uri}`;
+    return `URI="http://192.168.1.8:3000/stream?url=${encodeURIComponent(absoluteUrl)}"`;
+  })
+  // Riscrive i segmenti .ts, .key o .m3u8 (righe non commentate)
+  .replace(/^([^\s#"][^\n\r"]+\.(ts|key|m3u8))$/gm, (match, file) => {
+    const abs = `${baseUrl}/${file}`;
+    return `http://192.168.1.8:3000/stream?url=${encodeURIComponent(abs)}`;
+  })
+  // Riscrive URL assoluti
+  .replace(/(https?:\/\/[^\s\n"]+)/g, match =>
+    `http://192.168.1.8:3000/stream?url=${encodeURIComponent(match)}`
+  );
+
 
       res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
       res.send(rewritten);
@@ -194,3 +230,4 @@ app.get('/stream', async (req, res) => {
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Server avviato su 0.0.0.0:${PORT}`);
 });
+
