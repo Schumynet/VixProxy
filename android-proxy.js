@@ -95,7 +95,8 @@ app.get('/proxy/series/:id/:season/:episode', async (req, res) => {
 
     await browser.close();
 
-    res.json({ url: playlistUrl });
+    const proxyUrl = getProxyUrl(playlistUrl);
+    res.json({ url: proxyUrl });
 
   } catch (err) {
     console.error('❌ Errore nel proxy serie TV:', err);
@@ -142,8 +143,8 @@ app.get('/proxy/movie/:id', async (req, res) => {
     await browser.close();
 
     // Rispondi con link proxy
-    res.json({ url: playlistUrl });
-
+    const proxyUrl = `http://192.168.102.93:3000/stream?url=${encodeURIComponent(playlistUrl)}`;
+    res.json({ url: proxyUrl });
 
   } catch (err) {
     console.error("Errore nel proxy:", err);
