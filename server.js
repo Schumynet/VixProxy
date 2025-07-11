@@ -27,10 +27,6 @@ app.use((req, res, next) => {
 app.options('*', (req, res) => {
   res.sendStatus(200);
 });
-function getProxyUrl(originalUrl) {
-  return `http://192.168.1.8:3000/stream?url=${encodeURIComponent(originalUrl)}`;
-}
-
 
 
 const TMDB_API_KEY = '1e8c9083f94c62dd66fb2105cd7b613b'; // Inserisci qui la tua chiave TMDb
@@ -96,8 +92,7 @@ app.get('/proxy/series/:id/:season/:episode', async (req, res) => {
 
     await browser.close();
 
-    const proxyUrl = getProxyUrl(playlistUrl);
-    res.json({ url: proxyUrl });
+    res.json({ url: playlistUrl });
 
   } catch (err) {
     console.error('❌ Errore nel proxy serie TV:', err);
@@ -144,8 +139,8 @@ app.get('/proxy/movie/:id', async (req, res) => {
     await browser.close();
 
     // Rispondi con link proxy
-    const proxyUrl = `http://192.168.1.8:3000/stream?url=${encodeURIComponent(playlistUrl)}`;
-    res.json({ url: proxyUrl });
+    res.json({ url: playlistUrl });
+
 
   } catch (err) {
     console.error("Errore nel proxy:", err);
