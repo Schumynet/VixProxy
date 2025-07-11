@@ -152,6 +152,7 @@ app.get('/proxy/movie/:id', async (req, res) => {
   }
 });
 
+// Proxy universale per .m3u8, .ts, audio, sottotitoli
 app.get('/stream', async (req, res) => {
   const targetUrl = req.query.url;
   if (!targetUrl) return res.status(400).send('Missing url');
@@ -168,18 +169,28 @@ app.get('/stream', async (req, res) => {
       });
 
       let text = await response.text();
-      const baseUrl = targetUrl.split('/').slice(0, -1).join('/');
+const baseUrl = targetUrl.split('/').slice(0, -1).join('/');
 
-      const rewritten = text
-        .replace(/URI="([^"]+)"/g, (match, uri) => {
-          const absoluteUrl = uri.startsWith('http') ? uri : uri.startsWith('/') ? `https://vixsrc.to${uri}` : `${baseUrl}/${uri}`;
-          return `URI="${getProxyUrl(absoluteUrl)}"`;
-        })
-        .replace(/^([^\s#"][^\n\r"]+\.(ts|key|m3u8))$/gm, (match, file) => {
-          const abs = `${baseUrl}/${file}`;
-          return getProxyUrl(abs);
-        })
-        .replace(/(https?:\/\/[^\s\n"]+)/g, match => getProxyUrl(match));
+const rewritten = text
+  // Riscrive gli URI AES come URI="..."
+  .replace(/URI="([^"]+)"/g, (match, uri) => {
+    const absoluteUrl = uri.startsWith('http')
+      ? uri
+      : uri.startsWith('/')
+        ? `https://vixsrc.to${uri}`
+        : `${baseUrl}/${uri}`;
+    return `URI="http://192.168.102.93:3000/stream?url=${encodeURIComponent(absoluteUrl)}"`;
+  })
+  // Riscrive i segmenti .ts, .key o .m3u8 (righe non commentate)
+  .replace(/^([^\s#"][^\n\r"]+\.(ts|key|m3u8))$/gm, (match, file) => {
+    const abs = `${baseUrl}/${file}`;
+    return `http://192.168.102.93:3000/stream?url=${encodeURIComponent(abs)}`;
+  })
+  // Riscrive URL assoluti
+  .replace(/(https?:\/\/[^\s\n"]+)/g, match =>
+    `http://192.168.102.93:3000/stream?url=${encodeURIComponent(match)}`
+  );
+
 
       res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
       res.send(rewritten);
