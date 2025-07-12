@@ -16,6 +16,7 @@ import axios from 'axios';
 const app = express();
 const PORT = 3000;
 
+
 // ✅ Abilita CORS
 app.use((req, res, next) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -67,8 +68,10 @@ app.get('/proxy/series/:id/:season/:episode', async (req, res) => {
 
   try {
     browser = await puppeteer.launch({
-      headless: true,
-      executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
+    product: 'firefox',
+    browser: 'firefox',
+    executablePath: '/data/data/com.termux/files/usr/bin/firefox',
+    headless: true,
       args: ['--no-sandbox', '--disable-setuid-sandbox']
     });
 
@@ -113,7 +116,10 @@ app.get('/proxy/movie/:id', async (req, res) => {
 
   try {
     browser = await puppeteer.launch({
-      headless: true,
+       product: 'firefox',
+    browser: 'firefox',
+    executablePath: '/data/data/com.termux/files/usr/bin/firefox',
+    headless: true,
       args: ['--no-sandbox', '--disable-setuid-sandbox']
     });
 
