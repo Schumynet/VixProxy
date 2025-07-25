@@ -36,7 +36,7 @@ function getProxyUrl(originalUrl) {
 const TMDB_API_KEY = '1e8c9083f94c62dd66fb2105cd7b613b'; // Inserisci qui la tua chiave TMDb
 
 // Endpoint per interrompere il flusso
-app.get('proxy/stream/stop', (req, res) => {
+app.get('/stream/stop', (req, res) => {
     const { streamId } = req.query;
     
     if (!streamId) {
