@@ -30,7 +30,7 @@ app.options('*', (req, res) => {
 });
 
 function getProxyUrl(originalUrl) {
-  return `http://localhost:3000/stream?url=${encodeURIComponent(originalUrl)}`;
+  return `https://api.leleflix.store/stream?url=${encodeURIComponent(originalUrl)}`;
 }
 
 const TMDB_API_KEY = '1e8c9083f94c62dd66fb2105cd7b613b'; // Inserisci qui la tua chiave TMDb
@@ -161,7 +161,7 @@ app.get('/proxy/movie/:id', async (req, res) => {
     await browser.close();
 
     // Rispondi con link proxy
-    const proxyUrl = `http://localhost:3000/stream?url=${encodeURIComponent(playlistUrl)}`;
+    const proxyUrl = `https://api.leleflix.store/stream?url=${encodeURIComponent(playlistUrl)}`;
     res.json({ url: proxyUrl });
 
   } catch (err) {
@@ -201,16 +201,16 @@ const rewritten = text
       : uri.startsWith('/')
         ? `https://vixsrc.to${uri}`
         : `${baseUrl}/${uri}`;
-    return `URI="http://localhost:3000/stream?url=${encodeURIComponent(absoluteUrl)}"`;
+    return `URI="https://api.leleflix.store/stream?url=${encodeURIComponent(absoluteUrl)}"`;
   })
   // Riscrive i segmenti .ts, .key o .m3u8 (righe non commentate)
   .replace(/^([^\s#"][^\n\r"]+\.(ts|key|m3u8))$/gm, (match, file) => {
     const abs = `${baseUrl}/${file}`;
-    return `http://localhost:3000/stream?url=${encodeURIComponent(abs)}`;
+    return `https://api.leleflix.store/stream?url=${encodeURIComponent(abs)}`;
   })
   // Riscrive URL assoluti
   .replace(/(https?:\/\/[^\s\n"]+)/g, match =>
-    `http://localhost:3000/stream?url=${encodeURIComponent(match)}`
+    `https://api.leleflix.store/stream?url=${encodeURIComponent(match)}`
   );
 
 
