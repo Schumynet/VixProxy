@@ -3,6 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
+const activeStreams = new Map();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -29,10 +30,26 @@ app.options('*', (req, res) => {
 });
 
 function getProxyUrl(originalUrl) {
-  return `https://api.leleflix.store/stream?url=${encodeURIComponent(originalUrl)}`;
+  return `http://localhost:3000/stream?url=${encodeURIComponent(originalUrl)}`;
 }
 
 const TMDB_API_KEY = '1e8c9083f94c62dd66fb2105cd7b613b'; // Inserisci qui la tua chiave TMDb
+
+// Endpoint per interrompere il flusso
+app.get('/stream/stop', (req, res) => {
+  const { streamId } = req.query;
+  if (!streamId) return res.status(400).send('Stream ID mancante');
+
+  const stream = activeStreams.get(streamId);
+  if (stream) {
+    console.log(`⏹ Interrompo flusso ${streamId}`);
+    stream.destroy();
+    activeStreams.delete(streamId);
+    res.send({ success: true });
+  } else {
+    res.status(404).send('Flusso non trovato');
+  }
+});
 
 app.get('/home/trending', async (req, res) => {
   try {
@@ -83,8 +100,9 @@ app.get('/proxy/series/:id/:season/:episode', async (req, res) => {
 
       page.on('requestfinished', request => {
         const url = request.url();
-        console.log("🔍 Intercettato:", url);
+        
         if (url.includes('/playlist/') && url.includes('token=') && url.includes('h=1')) {
+          console.log("🔍 Intercettato:", url);
           clearTimeout(timeout);
           resolve(url);
         }
@@ -143,7 +161,7 @@ app.get('/proxy/movie/:id', async (req, res) => {
     await browser.close();
 
     // Rispondi con link proxy
-    const proxyUrl = `https://api.leleflix.store/stream?url=${encodeURIComponent(playlistUrl)}`;
+    const proxyUrl = `http://localhost:3000/stream?url=${encodeURIComponent(playlistUrl)}`;
     res.json({ url: proxyUrl });
 
   } catch (err) {
@@ -155,10 +173,13 @@ app.get('/proxy/movie/:id', async (req, res) => {
 
 // Proxy universale per .m3u8, .ts, audio, sottotitoli
 app.get('/stream', async (req, res) => {
-  const targetUrl = req.query.url;
+ const targetUrl = req.query.url;
+  const streamId = req.query.streamId || Math.random().toString(36).substring(7);
+  
   if (!targetUrl) return res.status(400).send('Missing url');
 
   const isM3U8 = targetUrl.includes('.m3u8') || targetUrl.includes('playlist') || targetUrl.includes('master');
+
 
   if (isM3U8) {
     try {
@@ -180,16 +201,16 @@ const rewritten = text
       : uri.startsWith('/')
         ? `https://vixsrc.to${uri}`
         : `${baseUrl}/${uri}`;
-    return `URI="https://api.leleflix.store/stream?url=${encodeURIComponent(absoluteUrl)}"`;
+    return `URI="http://localhost:3000/stream?url=${encodeURIComponent(absoluteUrl)}"`;
   })
   // Riscrive i segmenti .ts, .key o .m3u8 (righe non commentate)
   .replace(/^([^\s#"][^\n\r"]+\.(ts|key|m3u8))$/gm, (match, file) => {
     const abs = `${baseUrl}/${file}`;
-    return `https://api.leleflix.store/stream?url=${encodeURIComponent(abs)}`;
+    return `http://localhost:3000/stream?url=${encodeURIComponent(abs)}`;
   })
   // Riscrive URL assoluti
   .replace(/(https?:\/\/[^\s\n"]+)/g, match =>
-    `https://api.leleflix.store/stream?url=${encodeURIComponent(match)}`
+    `http://localhost:3000/stream?url=${encodeURIComponent(match)}`
   );
 
 
@@ -201,7 +222,7 @@ const rewritten = text
       res.status(500).send('Errore proxy m3u8');
     }
   } else {
-    try {
+try {
       const urlObj = new URL(targetUrl);
       const client = urlObj.protocol === 'https:' ? https : http;
 
@@ -211,6 +232,17 @@ const rewritten = text
           'User-Agent': 'Mozilla/5.0'
         }
       }, proxyRes => {
+        // Registra il flusso attivo
+        activeStreams.set(streamId, proxyRes);
+        
+        // Gestisci la chiusura del client
+        req.on('close', () => {
+          if (!res.headersSent) {
+            proxyRes.destroy();
+            activeStreams.delete(streamId);
+          }
+        });
+
         res.writeHead(proxyRes.statusCode, proxyRes.headers);
         proxyRes.pipe(res);
       });
@@ -226,6 +258,6 @@ const rewritten = text
   }
 });
 
-app.listen(PORT, '0.0.0.0', () => {
+app.listen(PORT, () => {
   console.log(`📱 Proxy Android attivo su http://0.0.0.0:${PORT}/stream`);
 });
