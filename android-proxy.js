@@ -3,7 +3,6 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
-const activeConnections = new Map();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -34,25 +33,6 @@ function getProxyUrl(originalUrl) {
 }
 
 const TMDB_API_KEY = '1e8c9083f94c62dd66fb2105cd7b613b'; // Inserisci qui la tua chiave TMDb
-
-// Endpoint per interrompere il flusso
-app.get('/stream/stop', (req, res) => {
-    const { streamId } = req.query;
-    
-    if (!streamId) {
-        return res.status(400).json({ error: 'Stream ID mancante' });
-    }
-
-    const connection = activeConnections.get(streamId);
-    if (connection) {
-        console.log(`🛑 Interrompo flusso ${streamId}`);
-        connection.destroy(); // Chiude la connessione
-        activeConnections.delete(streamId);
-        res.json({ success: true });
-    } else {
-        res.status(404).json({ error: 'Flusso non trovato o già terminato' });
-    }
-});
 
 app.get('/home/trending', async (req, res) => {
   try {
@@ -103,9 +83,8 @@ app.get('/proxy/series/:id/:season/:episode', async (req, res) => {
 
       page.on('requestfinished', request => {
         const url = request.url();
-        
+        console.log("🔍 Intercettato:", url);
         if (url.includes('/playlist/') && url.includes('token=') && url.includes('h=1')) {
-          console.log("🔍 Intercettato:", url);
           clearTimeout(timeout);
           resolve(url);
         }
@@ -174,14 +153,66 @@ app.get('/proxy/movie/:id', async (req, res) => {
   }
 });
 
-// Proxy universale per .m3u8, .ts, audio, sottotitoli
-app.get('/stream', async (req, res) => {
- const targetUrl = req.query.url;
-    const streamId = req.query.streamId || Math.random().toString(36).substring(2, 9);
-    
-    if (!targetUrl) return res.status(400).send('Missing url');
 
-    const isM3U8 = targetUrl.includes('.m3u8') || targetUrl.includes('playlist') || targetUrl.includes('master');
+// Aggiungi queste variabili globali
+const activeStreams = new Map();
+const PENDING_REQUESTS = new Map();
+
+
+// Endpoint migliorato per lo stop
+app.get('/proxy/stream/stop', (req, res) => {
+    const { streamId } = req.query;
+    
+    if (!streamId) {
+        return res.status(400).json({ error: 'Stream ID mancante' });
+    }
+
+    // Cerca tra le connessioni attive
+    const activeStream = activeStreams.get(streamId);
+    if (activeStream) {
+        console.log(`🛑 Termino flusso attivo ${streamId}`);
+        activeStream.destroy();
+        activeStreams.delete(streamId);
+        return res.json({ success: true });
+    }
+
+    // Cerca tra le richieste in pending
+    const pendingRequest = PENDING_REQUESTS.get(streamId);
+    if (pendingRequest) {
+        console.log(`⏹ Annullo richiesta in pending ${streamId}`);
+        pendingRequest.abort();
+        PENDING_REQUESTS.delete(streamId);
+        return res.json({ success: true });
+    }
+
+    res.status(404).json({ error: 'Flusso non trovato' });
+});
+
+// Modifica il gestore /proxy/stream
+app.get('/proxy/stream', async (req, res) => {
+    const targetUrl = req.query.url;
+    const streamId = req.query.streamId;
+    
+    if (!targetUrl || !streamId) {
+        return res.status(400).send('Parametri mancanti');
+    }
+
+    const abortController = new AbortController();
+    PENDING_REQUESTS.set(streamId, abortController);
+
+    try {
+        const response = await fetch(targetUrl, {
+            headers: {
+                'Referer': 'https://vixsrc.to',
+                'User-Agent': 'Mozilla/5.0'
+            },
+            signal: abortController.signal
+        });
+
+        PENDING_REQUESTS.delete(streamId);
+
+        if (targetUrl.includes('.m3u8')) {
+           const isM3U8 = targetUrl.includes('.m3u8') || targetUrl.includes('playlist') || targetUrl.includes('master');
 
   if (isM3U8) {
     try {
@@ -224,43 +255,128 @@ const rewritten = text
       res.status(500).send('Errore proxy m3u8');
     }
   } else {
-        try {
-            const urlObj = new URL(targetUrl);
-            const client = urlObj.protocol === 'https:' ? https : http;
+    try {
+      const urlObj = new URL(targetUrl);
+      const client = urlObj.protocol === 'https:' ? https : http;
 
-            const proxyReq = client.get(targetUrl, {
-                headers: {
-                    'Referer': 'https://vixsrc.to',
-                    'User-Agent': 'Mozilla/5.0'
-                }
-            }, proxyRes => {
-                // Registra la connessione
-                activeConnections.set(streamId, proxyRes);
-                
-                // Gestione chiusura client
-                req.on('close', () => {
-                    if (!res.headersSent) {
-                        proxyRes.destroy();
-                        activeConnections.delete(streamId);
-                    }
-                });
-
-                res.writeHead(proxyRes.statusCode, proxyRes.headers);
-                proxyRes.pipe(res);
-            });
-
-            proxyReq.on('error', err => {
-                console.error('Errore proxy:', err);
-                res.status(500).send('Errore durante il proxy');
-            });
-
-        } catch (err) {
-            console.error('URL invalido:', err);
-            res.status(400).send('URL invalido');
+      const proxyReq = client.get(targetUrl, {
+        headers: {
+          'Referer': 'https://vixsrc.to',
+          'User-Agent': 'Mozilla/5.0'
         }
+      }, proxyRes => {
+        res.writeHead(proxyRes.statusCode, proxyRes.headers);
+        proxyRes.pipe(res);
+      });
+
+      proxyReq.on('error', err => {
+        console.error('Errore segmenti:', err);
+        res.status(500).send('Errore proxy media');
+      });
+    } catch (err) {
+      console.error('URL invalido:', err);
+      res.status(400).send('URL invalido');
+    }
+  }
+        } else {
+            const connection = {
+                stream: response.body,
+                destroy: () => response.body.destroy()
+            };
+            activeStreams.set(streamId, connection);
+
+            req.on('close', () => {
+                if (!res.headersSent) {
+                    connection.destroy();
+                    activeStreams.delete(streamId);
+                }
+            });
+
+            res.writeHead(response.status, response.headers);
+            response.body.pipe(res);
+        }
+    } catch (err) {
+        if (err.name !== 'AbortError') {
+            console.error('Errore proxy:', err);
+            res.status(500).send('Errore durante il proxy');
+        }
+        PENDING_REQUESTS.delete(streamId);
     }
 });
 
-app.listen(PORT, () => {
+// Proxy universale per .m3u8, .ts, audio, sottotitoli
+app.get('/stream', async (req, res) => {
+  const targetUrl = req.query.url;
+  if (!targetUrl) return res.status(400).send('Missing url');
+
+  const isM3U8 = targetUrl.includes('.m3u8') || targetUrl.includes('playlist') || targetUrl.includes('master');
+
+  if (isM3U8) {
+    try {
+      const response = await fetch(targetUrl, {
+        headers: {
+          'Referer': 'https://vixsrc.to',
+          'User-Agent': 'Mozilla/5.0'
+        }
+      });
+
+      let text = await response.text();
+const baseUrl = targetUrl.split('/').slice(0, -1).join('/');
+
+const rewritten = text
+  // Riscrive gli URI AES come URI="..."
+  .replace(/URI="([^"]+)"/g, (match, uri) => {
+    const absoluteUrl = uri.startsWith('http')
+      ? uri
+      : uri.startsWith('/')
+        ? `https://vixsrc.to${uri}`
+        : `${baseUrl}/${uri}`;
+    return `URI="https://api.leleflix.store/stream?url=${encodeURIComponent(absoluteUrl)}"`;
+  })
+  // Riscrive i segmenti .ts, .key o .m3u8 (righe non commentate)
+  .replace(/^([^\s#"][^\n\r"]+\.(ts|key|m3u8))$/gm, (match, file) => {
+    const abs = `${baseUrl}/${file}`;
+    return `https://api.leleflix.store/stream?url=${encodeURIComponent(abs)}`;
+  })
+  // Riscrive URL assoluti
+  .replace(/(https?:\/\/[^\s\n"]+)/g, match =>
+    `https://api.leleflix.store/stream?url=${encodeURIComponent(match)}`
+  );
+
+
+      res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
+      res.send(rewritten);
+
+    } catch (err) {
+      console.error('Errore fetch m3u8:', err);
+      res.status(500).send('Errore proxy m3u8');
+    }
+  } else {
+    try {
+      const urlObj = new URL(targetUrl);
+      const client = urlObj.protocol === 'https:' ? https : http;
+
+      const proxyReq = client.get(targetUrl, {
+        headers: {
+          'Referer': 'https://vixsrc.to',
+          'User-Agent': 'Mozilla/5.0'
+        }
+      }, proxyRes => {
+        res.writeHead(proxyRes.statusCode, proxyRes.headers);
+        proxyRes.pipe(res);
+      });
+
+      proxyReq.on('error', err => {
+        console.error('Errore segmenti:', err);
+        res.status(500).send('Errore proxy media');
+      });
+    } catch (err) {
+      console.error('URL invalido:', err);
+      res.status(400).send('URL invalido');
+    }
+  }
+});
+
+app.listen(PORT, '0.0.0.0', () => {
   console.log(`📱 Proxy Android attivo su http://0.0.0.0:${PORT}/stream`);
 });
