@@ -37,18 +37,21 @@ const TMDB_API_KEY = '1e8c9083f94c62dd66fb2105cd7b613b'; // Inserisci qui la tua
 
 // Endpoint per interrompere il flusso
 app.get('/stream/stop', (req, res) => {
-  const { streamId } = req.query;
-  if (!streamId) return res.status(400).send('Stream ID mancante');
+    const { streamId } = req.query;
+    
+    if (!streamId) {
+        return res.status(400).json({ error: 'Stream ID mancante' });
+    }
 
-  const stream = activeStreams.get(streamId);
-  if (stream) {
-    console.log(`⏹ Interrompo flusso ${streamId}`);
-    stream.destroy();
-    activeStreams.delete(streamId);
-    res.send({ success: true });
-  } else {
-    res.status(404).send('Flusso non trovato');
-  }
+    const connection = activeConnections.get(streamId);
+    if (connection) {
+        console.log(`🛑 Interrompo flusso ${streamId}`);
+        connection.destroy(); // Chiude la connessione
+        activeConnections.delete(streamId);
+        res.json({ success: true });
+    } else {
+        res.status(404).json({ error: 'Flusso non trovato o già terminato' });
+    }
 });
 
 app.get('/home/trending', async (req, res) => {
@@ -174,12 +177,11 @@ app.get('/proxy/movie/:id', async (req, res) => {
 // Proxy universale per .m3u8, .ts, audio, sottotitoli
 app.get('/stream', async (req, res) => {
  const targetUrl = req.query.url;
-  const streamId = req.query.streamId || Math.random().toString(36).substring(7);
-  
-  if (!targetUrl) return res.status(400).send('Missing url');
+    const streamId = req.query.streamId || Math.random().toString(36).substring(2, 9);
+    
+    if (!targetUrl) return res.status(400).send('Missing url');
 
-  const isM3U8 = targetUrl.includes('.m3u8') || targetUrl.includes('playlist') || targetUrl.includes('master');
-
+    const isM3U8 = targetUrl.includes('.m3u8') || targetUrl.includes('playlist') || targetUrl.includes('master');
 
   if (isM3U8) {
     try {
@@ -222,40 +224,41 @@ const rewritten = text
       res.status(500).send('Errore proxy m3u8');
     }
   } else {
-try {
-      const urlObj = new URL(targetUrl);
-      const client = urlObj.protocol === 'https:' ? https : http;
+        try {
+            const urlObj = new URL(targetUrl);
+            const client = urlObj.protocol === 'https:' ? https : http;
 
-      const proxyReq = client.get(targetUrl, {
-        headers: {
-          'Referer': 'https://vixsrc.to',
-          'User-Agent': 'Mozilla/5.0'
+            const proxyReq = client.get(targetUrl, {
+                headers: {
+                    'Referer': 'https://vixsrc.to',
+                    'User-Agent': 'Mozilla/5.0'
+                }
+            }, proxyRes => {
+                // Registra la connessione
+                activeConnections.set(streamId, proxyRes);
+                
+                // Gestione chiusura client
+                req.on('close', () => {
+                    if (!res.headersSent) {
+                        proxyRes.destroy();
+                        activeConnections.delete(streamId);
+                    }
+                });
+
+                res.writeHead(proxyRes.statusCode, proxyRes.headers);
+                proxyRes.pipe(res);
+            });
+
+            proxyReq.on('error', err => {
+                console.error('Errore proxy:', err);
+                res.status(500).send('Errore durante il proxy');
+            });
+
+        } catch (err) {
+            console.error('URL invalido:', err);
+            res.status(400).send('URL invalido');
         }
-      }, proxyRes => {
-        // Registra il flusso attivo
-        activeStreams.set(streamId, proxyRes);
-        
-        // Gestisci la chiusura del client
-        req.on('close', () => {
-          if (!res.headersSent) {
-            proxyRes.destroy();
-            activeStreams.delete(streamId);
-          }
-        });
-
-        res.writeHead(proxyRes.statusCode, proxyRes.headers);
-        proxyRes.pipe(res);
-      });
-
-      proxyReq.on('error', err => {
-        console.error('Errore segmenti:', err);
-        res.status(500).send('Errore proxy media');
-      });
-    } catch (err) {
-      console.error('URL invalido:', err);
-      res.status(400).send('URL invalido');
     }
-  }
 });
 
 app.listen(PORT, () => {
