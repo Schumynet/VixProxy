@@ -34,11 +34,81 @@ function getProxyUrl(originalUrl) {
 
 const TMDB_API_KEY = '1e8c9083f94c62dd66fb2105cd7b613b'; // Inserisci qui la tua chiave TMDb
 
+const vixCache = {
+  movie: { data: null, lastFetch: 0 },
+  tv: { data: null, lastFetch: 0 }
+};
+
+async function fetchVixDatabase(type) {
+  // Cache di 1 giorno
+  if (vixCache[type].data && Date.now() - vixCache[type].lastFetch < 86400000) {
+    return vixCache[type].data;
+  }
+
+  try {
+    const response = await axios.get(`https://vixsrc.to/api/list/${type}?lang=it`, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0',
+        'Referer': 'https://vixsrc.to'
+      }
+    });
+    vixCache[type] = {
+      data: response.data || [],
+      lastFetch: Date.now()
+    };
+    return vixCache[type].data;
+  } catch (err) {
+    console.error(`❌ Errore nel caricamento database VixSRC (${type}):`, err);
+    return vixCache[type].data || []; // Restituisci i dati in cache se disponibili
+  }
+}
+
+// Aggiungi questo endpoint dopo gli altri endpoint /home/*
+app.get('/home/available', async (req, res) => {
+  try {
+    // Effettua le richieste a VixSRC dal server (senza problemi CORS)
+    const [moviesRes, tvRes] = await Promise.all([
+      axios.get('https://vixsrc.to/api/list/movie?lang=it', {
+        headers: {
+          'Referer': 'https://vixsrc.to',
+          'User-Agent': 'Mozilla/5.0'
+        }
+      }),
+      axios.get('https://vixsrc.to/api/list/tv?lang=it', {
+        headers: {
+          'Referer': 'https://vixsrc.to',
+          'User-Agent': 'Mozilla/5.0'
+        }
+      })
+    ]);
+
+    // Combina e formatta i risultati
+    const availableContent = {
+      movies: moviesRes.data || [],
+      tv: tvRes.data || [],
+      lastUpdated: new Date().toISOString()
+    };
+
+    res.json(availableContent);
+
+  } catch (err) {
+    console.error('❌ Errore nel caricamento contenuti disponibili:', err);
+    res.status(500).json({ 
+      error: 'Errore nel recupero dei contenuti disponibili',
+      details: err.message 
+    });
+  }
+});
+
 app.get('/home/trending', async (req, res) => {
   try {
     // Leggi i database VixSRC
-    const rawMovies = JSON.parse(fs.readFileSync(path.join(__dirname, 'vix-movies-ids.json')));
-    const rawTV = JSON.parse(fs.readFileSync(path.join(__dirname, 'vix-tv-ids.json')));
+     // Carica dinamicamente i database VixSRC
+    const [rawMovies, rawTV] = await Promise.all([
+      fetchVixDatabase('movie'),
+      fetchVixDatabase('tv')
+    ]);
+
     const vixMovieIds = new Set(rawMovies.map(e => e.tmdb_id));
     const vixTVIds = new Set(rawTV.map(e => e.tmdb_id));
 
