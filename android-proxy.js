@@ -132,9 +132,9 @@ app.get('/home/trending', async (req, res) => {
 
 
 app.get('/proxy/series/:id/:season/:episode', async (req, res) => {
-  const { id, season, episode } = req.params;
   let browser;
-
+  let page;
+  
   try {
     browser = await puppeteer.launch({
       headless: true,
@@ -142,35 +142,53 @@ app.get('/proxy/series/:id/:season/:episode', async (req, res) => {
       args: ['--no-sandbox', '--disable-setuid-sandbox']
     });
 
-    const page = await browser.newPage();
-    await page.setExtraHTTPHeaders({ Referer: 'https://vixsrc.to' });
+    page = await browser.newPage();
+    
+    // Aggiungi cleanup dei listener
+    const cleanupListeners = () => {
+      page.removeAllListeners('requestfinished');
+      page.removeAllListeners('error');
+      page.removeAllListeners('close');
+    };
 
     const targetUrl = `https://vixsrc.to/tv/${id}/${season}/${episode}?lang=it`;
     console.log('🎬 Navigo a:', targetUrl);
 
     const playlistUrl = await new Promise(async (resolve, reject) => {
-      const timeout = setTimeout(() => reject('Timeout raggiunto'), 10000);
+      const timeout = setTimeout(() => {
+        cleanupListeners();
+        reject('Timeout raggiunto');
+      }, 10000);
 
-      page.on('requestfinished', request => {
+      const onRequestFinished = (request) => {
         const url = request.url();
         console.log("🔍 Intercettato:", url);
         if (url.includes('/playlist/') && url.includes('token=') && url.includes('h=1')) {
           clearTimeout(timeout);
+          cleanupListeners();
           resolve(url);
         }
+      };
+
+      page.on('requestfinished', onRequestFinished);
+      
+      page.on('error', (err) => {
+        cleanupListeners();
+        clearTimeout(timeout);
+        reject(err);
       });
 
       await page.goto(targetUrl, { waitUntil: 'domcontentloaded' });
     });
 
     await browser.close();
-
     const proxyUrl = getProxyUrl(playlistUrl);
     res.json({ url: proxyUrl });
 
   } catch (err) {
     console.error('❌ Errore nel proxy serie TV:', err);
-    if (browser) await browser.close();
+    if (page) await page.close().catch(e => console.error('Error closing page:', e));
+    if (browser) await browser.close().catch(e => console.error('Error closing browser:', e));
     res.status(500).json({ error: 'Errore durante l\'estrazione dell\'episodio' });
   }
 });
@@ -180,46 +198,86 @@ app.get('/proxy/series/:id/:season/:episode', async (req, res) => {
 app.get('/proxy/movie/:id', async (req, res) => {
   const { id } = req.params;
   let browser;
+  let page;
 
   try {
     browser = await puppeteer.launch({
       headless: true,
-      args: ['--no-sandbox', '--disable-setuid-sandbox']
+      args: ['--no-sandbox', '--disable-setuid-sandbox'],
+      executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined
     });
 
-    const page = await browser.newPage();
+    page = await browser.newPage();
     await page.setExtraHTTPHeaders({ Referer: 'https://vixsrc.to' });
 
-    const playlistUrl = await new Promise(async (resolve, reject) => {
-      const timeout = setTimeout(() => reject('Timeout raggiunto'), 10000);
+    // Funzione per pulire i listener
+    const cleanupListeners = () => {
+      if (page) {
+        page.removeAllListeners('requestfinished');
+        page.removeAllListeners('error');
+        page.removeAllListeners('close');
+      }
+    };
 
-      page.on('requestfinished', request => {
+    const playlistUrl = await new Promise(async (resolve, reject) => {
+      const timeout = setTimeout(() => {
+        cleanupListeners();
+        reject('Timeout raggiunto');
+      }, 15000); // Aumentato a 15 secondi per i film
+
+      const onRequestFinished = (request) => {
         const url = request.url();
-        if (
-          url.includes('/playlist/') &&
-          url.includes('token=') &&
-          url.includes('h=1')
-        ) {
+        if (url.includes('/playlist/') && url.includes('token=') && url.includes('h=1')) {
           clearTimeout(timeout);
+          cleanupListeners();
           resolve(url);
         }
-      });
+      };
 
-      await page.goto(`https://vixsrc.to/movie/${id}?lang=it`, {
-        waitUntil: 'domcontentloaded'
-      });
+      const onPageError = (err) => {
+        clearTimeout(timeout);
+        cleanupListeners();
+        reject(err);
+      };
+
+      page.on('requestfinished', onRequestFinished);
+      page.on('error', onPageError);
+
+      try {
+        await page.goto(`https://vixsrc.to/movie/${id}?lang=it`, {
+          waitUntil: 'domcontentloaded',
+          timeout: 15000
+        });
+      } catch (err) {
+        clearTimeout(timeout);
+        cleanupListeners();
+        reject(err);
+      }
     });
 
-    await browser.close();
+    // Chiudi la pagina e il browser
+    await page.close().catch(e => console.error('Error closing page:', e));
+    await browser.close().catch(e => console.error('Error closing browser:', e));
 
     // Rispondi con link proxy
-    const proxyUrl = `https://api.leleflix.store/stream?url=${encodeURIComponent(playlistUrl)}`;
+    const proxyUrl = getProxyUrl(playlistUrl);
     res.json({ url: proxyUrl });
 
   } catch (err) {
-    console.error("Errore nel proxy:", err);
-    if (browser) await browser.close();
-    res.status(500).json({ error: 'Errore durante l\'estrazione del flusso' });
+    console.error("❌ Errore nel proxy film:", err);
+    
+    // Pulizia completa in caso di errore
+    if (page) {
+      await page.close().catch(e => console.error('Error closing page on error:', e));
+    }
+    if (browser) {
+      await browser.close().catch(e => console.error('Error closing browser on error:', e));
+    }
+    
+    res.status(500).json({ 
+      error: 'Errore durante l\'estrazione del flusso',
+      details: err.message 
+    });
   }
 });
 
@@ -260,15 +318,28 @@ app.get('/proxy/stream/stop', (req, res) => {
 
 // Modifica il gestore /proxy/stream
 app.get('/proxy/stream', async (req, res) => {
-    const targetUrl = req.query.url;
-    const streamId = req.query.streamId;
-    
-    if (!targetUrl || !streamId) {
-        return res.status(400).send('Parametri mancanti');
-    }
+const targetUrl = req.query.url;
+  const streamId = req.query.streamId;
+  
+  if (!targetUrl || !streamId) {
+    return res.status(400).send('Parametri mancanti');
+  }
 
-    const abortController = new AbortController();
-    PENDING_REQUESTS.set(streamId, abortController);
+  const abortController = new AbortController();
+  PENDING_REQUESTS.set(streamId, abortController);
+
+  // Cleanup function
+  const cleanup = () => {
+    PENDING_REQUESTS.delete(streamId);
+    res.removeAllListeners('close');
+  };
+
+  res.on('close', () => {
+    if (!res.headersSent) {
+      abortController.abort();
+    }
+    cleanup();
+  });
 
     try {
         const response = await fetch(targetUrl, {
@@ -278,6 +349,9 @@ app.get('/proxy/stream', async (req, res) => {
             },
             signal: abortController.signal
         });
+
+            cleanup();
+
 
         PENDING_REQUESTS.delete(streamId);
 
@@ -372,6 +446,33 @@ const rewritten = text
         }
         PENDING_REQUESTS.delete(streamId);
     }
+});
+
+// Aggiungi timeout a tutte le richieste axios
+axios.defaults.timeout = 10000; // 10 secondi
+
+// Gestione errori globale
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+});
+
+process.on('uncaughtException', (err) => {
+  console.error('Uncaught Exception:', err);
+  // Potresti voler riavviare il processo qui
+  process.exit(1);
+});
+
+
+// Aggiungi monitoring degli eventi
+process.on('warning', (warning) => {
+  console.warn('Node Warning:', warning.name);
+  console.warn(warning.message);
+  console.warn(warning.stack);
+  
+  if (warning.name === 'MaxListenersExceededWarning') {
+    // Logga quali emitter hanno troppi listener
+    console.error('Emitter with too many listeners:', warning.emitter);
+  }
 });
 
 // Proxy universale per .m3u8, .ts, audio, sottotitoli
