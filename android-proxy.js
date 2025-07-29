@@ -132,6 +132,8 @@ app.get('/home/trending', async (req, res) => {
 
 
 app.get('/proxy/series/:id/:season/:episode', async (req, res) => {
+  // Estrai i parametri dall'URL
+  const { id, season, episode } = req.params;
   let browser;
   let page;
   
