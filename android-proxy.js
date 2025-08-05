@@ -165,8 +165,7 @@ app.get('/proxy/series/:id/:season/:episode', async (req, res) => {
     browser = await puppeteer.launch({
       headless: true,
       executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
-      args: ['--no-sandbox', '--disable-setuid-sandbox',    '--disable-dev-shm-usage', // Importante per limiti di memoria
-    '--single-process']
+      args: ['--no-sandbox', '--disable-setuid-sandbox']
     });
 
     page = await browser.newPage();
@@ -231,9 +230,7 @@ app.get('/proxy/movie/:id', async (req, res) => {
   try {
     browser = await puppeteer.launch({
       headless: true,
-      args: ['--no-sandbox', '--disable-setuid-sandbox',     '--disable-dev-shm-usage', // Importante per limiti di memoria
-    '--single-process' // Riduce l'uso di memoria
-    ],
+      args: ['--no-sandbox', '--disable-setuid-sandbox'],
       executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined
     });
 
@@ -254,7 +251,6 @@ app.get('/proxy/movie/:id', async (req, res) => {
         cleanupListeners();
         reject('Timeout raggiunto');
       }, 8000); // Aumentato a 15 secondi per i film
-      console.log('🎬 Navigo a:', targetUrl);
       const onRequestFinished = (request) => {
         const url = request.url();
         if (url.includes('/playlist/') && url.includes('token=') && url.includes('h=1')) {
@@ -277,7 +273,7 @@ app.get('/proxy/movie/:id', async (req, res) => {
         await page.goto(`https://vixsrc.to/movie/${id}?lang=it`, {
           
           waitUntil: 'domcontentloaded',
-          timeout: 15000
+          timeout: 8000
         });
       } catch (err) {
         clearTimeout(timeout);
