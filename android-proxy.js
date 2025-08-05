@@ -165,7 +165,10 @@ app.get('/proxy/series/:id/:season/:episode', async (req, res) => {
     browser = await puppeteer.launch({
       headless: true,
       executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
-      args: ['--no-sandbox', '--disable-setuid-sandbox']
+      args: ['--no-sandbox', '--disable-setuid-sandbox',    '--disable-dev-shm-usage', // Importante per limiti di memoria
+    '--single-process', // Riduce l'uso di memoria
+    '--no-zygote',
+    '--no-first-run']
     });
 
     page = await browser.newPage();
@@ -188,8 +191,9 @@ app.get('/proxy/series/:id/:season/:episode', async (req, res) => {
 
       const onRequestFinished = (request) => {
         const url = request.url();
-        console.log("🔍 Intercettato:", url);
+        
         if (url.includes('/playlist/') && url.includes('token=') && url.includes('h=1')) {
+          console.log("🔍 Intercettato:", url);
           clearTimeout(timeout);
           cleanupListeners();
           resolve(url);
@@ -229,13 +233,16 @@ app.get('/proxy/movie/:id', async (req, res) => {
   try {
     browser = await puppeteer.launch({
       headless: true,
-      args: ['--no-sandbox', '--disable-setuid-sandbox'],
+      args: ['--no-sandbox', '--disable-setuid-sandbox',     '--disable-dev-shm-usage', // Importante per limiti di memoria
+    '--single-process', // Riduce l'uso di memoria
+    '--no-zygote',
+    '--no-first-run'],
       executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined
     });
 
     page = await browser.newPage();
     await page.setExtraHTTPHeaders({ Referer: 'https://vixsrc.to' });
-
+    console.log('🎬 Navigo a:', `https://vixsrc.to/movie/${id}?lang=it`);
     // Funzione per pulire i listener
     const cleanupListeners = () => {
       if (page) {
@@ -249,8 +256,8 @@ app.get('/proxy/movie/:id', async (req, res) => {
       const timeout = setTimeout(() => {
         cleanupListeners();
         reject('Timeout raggiunto');
-      }, 15000); // Aumentato a 15 secondi per i film
-
+      }, 8000); // Aumentato a 15 secondi per i film
+      console.log('🎬 Navigo a:', targetUrl);
       const onRequestFinished = (request) => {
         const url = request.url();
         if (url.includes('/playlist/') && url.includes('token=') && url.includes('h=1')) {
@@ -271,6 +278,7 @@ app.get('/proxy/movie/:id', async (req, res) => {
 
       try {
         await page.goto(`https://vixsrc.to/movie/${id}?lang=it`, {
+          
           waitUntil: 'domcontentloaded',
           timeout: 15000
         });
