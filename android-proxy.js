@@ -17,6 +17,7 @@ const app = express();
 const PORT = 3000;
 
 
+
 // Aggiungi questo all'inizio del file
 const MAX_RESTARTS = 5;
 let restarts = 0;
@@ -39,12 +40,6 @@ function startServer() {
 
 // Avvia il server invece di app.listen diretto
 startServer();
-
-
-
-
-
-
 // ✅ Abilita CORS
 app.use((req, res, next) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -167,21 +162,11 @@ app.get('/proxy/series/:id/:season/:episode', async (req, res) => {
   let page;
   
   try {
-// Modifica la configurazione di Puppeteer per usare meno memoria
- browser = await puppeteer.launch({
-  headless: true,
-  executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
-  args: [
-    '--no-sandbox',
-    '--disable-setuid-sandbox',
-    '--disable-dev-shm-usage', // Importante per limiti di memoria
-    '--single-process', // Riduce l'uso di memoria
-    '--no-zygote',
-    '--no-first-run'
-  ],
-  ignoreDefaultArgs: ['--disable-extensions']
-});
-
+    browser = await puppeteer.launch({
+      headless: true,
+      executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
+      args: ['--no-sandbox', '--disable-setuid-sandbox']
+    });
 
     page = await browser.newPage();
     
@@ -242,19 +227,11 @@ app.get('/proxy/movie/:id', async (req, res) => {
   let page;
 
   try {
- browser = await puppeteer.launch({
-  headless: true,
-  executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
-  args: [
-    '--no-sandbox',
-    '--disable-setuid-sandbox',
-    '--disable-dev-shm-usage', // Importante per limiti di memoria
-    '--single-process', // Riduce l'uso di memoria
-    '--no-zygote',
-    '--no-first-run'
-  ],
-  ignoreDefaultArgs: ['--disable-extensions']
-});
+    browser = await puppeteer.launch({
+      headless: true,
+      args: ['--no-sandbox', '--disable-setuid-sandbox'],
+      executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined
+    });
 
     page = await browser.newPage();
     await page.setExtraHTTPHeaders({ Referer: 'https://vixsrc.to' });
@@ -596,5 +573,4 @@ const rewritten = text
     }
   }
 });
-
 
