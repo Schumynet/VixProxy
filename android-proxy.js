@@ -41,34 +41,7 @@ function startServer() {
 startServer();
 
 
-const puppeteerQueue = [];
-let activePuppeteerTasks = 0;
-const MAX_PARALLEL_TASKS = 2; // Riduci questo numero su Termux
 
-async function runWithPuppeteer(task) {
-  return new Promise((resolve, reject) => {
-    const execute = async () => {
-      activePuppeteerTasks++;
-      try {
-        const result = await task();
-        resolve(result);
-      } catch (err) {
-        reject(err);
-      } finally {
-        activePuppeteerTasks--;
-        if (puppeteerQueue.length > 0) {
-          puppeteerQueue.shift()();
-        }
-      }
-    };
-
-    if (activePuppeteerTasks < MAX_PARALLEL_TASKS) {
-      execute();
-    } else {
-      puppeteerQueue.push(execute);
-    }
-  });
-}
 
 
 
@@ -193,7 +166,7 @@ app.get('/proxy/series/:id/:season/:episode', async (req, res) => {
   let browser;
   let page;
   
-  await runWithPuppeteer(async () => {
+  try {
 // Modifica la configurazione di Puppeteer per usare meno memoria
  browser = await puppeteer.launch({
   headless: true,
@@ -253,12 +226,12 @@ app.get('/proxy/series/:id/:season/:episode', async (req, res) => {
     const proxyUrl = getProxyUrl(playlistUrl);
     res.json({ url: proxyUrl });
 
-  }).catch(async err => {
+  } catch (err) {
     console.error('❌ Errore nel proxy serie TV:', err);
     if (page) await page.close().catch(e => console.error('Error closing page:', e));
     if (browser) await browser.close().catch(e => console.error('Error closing browser:', e));
     res.status(500).json({ error: 'Errore durante l\'estrazione dell\'episodio' });
-  });
+  }
 });
 
 
@@ -268,7 +241,7 @@ app.get('/proxy/movie/:id', async (req, res) => {
   let browser;
   let page;
 
-  await runWithPuppeteer(async () => {
+  try {
  browser = await puppeteer.launch({
   headless: true,
   executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
@@ -339,7 +312,7 @@ app.get('/proxy/movie/:id', async (req, res) => {
     const proxyUrl = getProxyUrl(playlistUrl);
     res.json({ url: proxyUrl });
 
-  }).catch(async err => {
+  } catch (err) {
     console.error("❌ Errore nel proxy film:", err);
     
     // Pulizia completa in caso di errore
@@ -354,7 +327,7 @@ app.get('/proxy/movie/:id', async (req, res) => {
       error: 'Errore durante l\'estrazione del flusso',
       details: err.message 
     });
-  });
+  }
 });
 
 
