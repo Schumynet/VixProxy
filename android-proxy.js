@@ -6,7 +6,7 @@ import { dirname } from 'path';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-import puppeteer from 'puppeteer';
+import puppeteer from 'puppeteer-core';
 import express from 'express';
 import fetch from 'node-fetch';
 import https from 'https';
