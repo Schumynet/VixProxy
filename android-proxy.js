@@ -16,42 +16,138 @@ import axios from 'axios';
 const app = express();
 const PORT = 3000;
 
+
+// Struttura per memorizzare gli utenti unici del giorno
+const dailyVisitors = {
+  date: new Date().toDateString(),
+  visitors: new Map() // Key: IP, Value: { count, firstSeen, lastSeen, country }
+};
+
+// Middleware per registrare visitatori (ignora richieste .ts)
 app.use((req, res, next) => {
-  // Ottieni l'IP reale (priorità a Cloudflare, poi altri header, infine remoteAddress)
+  if (req.path.endsWith('.ts')) return next(); // Salta per segmenti video
+  
   const realIp = req.headers['cf-connecting-ip'] || 
                 (req.headers['x-forwarded-for'] ? req.headers['x-forwarded-for'].split(',')[0].trim() : null) || 
                 req.connection.remoteAddress;
-
-  // Ottieni il paese dall'header di Cloudflare (codice ISO a 2 lettere)
   const country = req.headers['cf-ipcountry'] || 'XX';
 
-  // Mappa alcuni codici paese a nomi completi (puoi estendere questo oggetto)
-  const countryNames = {
-    'IT': 'Italia',
-    'US': 'Stati Uniti',
-    'DE': 'Germania',
-    'FR': 'Francia',
-    'ES': 'Spagna',
-    'GB': 'Regno Unito',
-    'RU': 'Russia',
-    'JP': 'Giappone'
-    // Aggiungi altri paesi se necessario
-  };
-
-  const countryName = countryNames[country] || country;
-
-  // Registra le informazioni
-  console.log(`🌍 Visitatore da ${realIp} (${countryName}) - ${req.method} ${req.url}`);
-
-  // Aggiungi le informazioni alla request per eventuali route successive
-  req.visitorInfo = {
-    ip: realIp,
-    countryCode: country,
-    countryName: countryName,
-    userAgent: req.headers['user-agent']
-  };
+  // Aggiorna o aggiungi il visitatore
+  if (!dailyVisitors.visitors.has(realIp)) {
+    dailyVisitors.visitors.set(realIp, {
+      count: 1,
+      firstSeen: new Date(),
+      lastSeen: new Date(),
+      country: country,
+      userAgent: req.headers['user-agent']
+    });
+  } else {
+    const visitor = dailyVisitors.visitors.get(realIp);
+    visitor.count++;
+    visitor.lastSeen = new Date();
+  }
 
   next();
+});
+
+// Endpoint per vedere le statistiche giornaliere
+app.get('/admin/visitors', (req, res) => {
+  // Controlla se è un nuovo giorno
+  const today = new Date().toDateString();
+  if (dailyVisitors.date !== today) {
+    // Salva i dati del giorno precedente
+    saveDailyReport();
+    // Resetta per il nuovo giorno
+    dailyVisitors.date = today;
+    dailyVisitors.visitors = new Map();
+  }
+
+  // Prepara i dati per la visualizzazione
+  const visitorsArray = Array.from(dailyVisitors.visitors.entries()).map(([ip, data]) => ({
+    ip,
+    ...data,
+    firstSeen: data.firstSeen.toISOString(),
+    lastSeen: data.lastSeen.toISOString()
+  }));
+
+  res.json({
+    date: dailyVisitors.date,
+    totalVisitors: dailyVisitors.visitors.size,
+    visitors: visitorsArray
+  });
+});
+
+// Funzione per salvare il report giornaliero
+function saveDailyReport() {
+  const report = {
+    date: dailyVisitors.date,
+    totalVisitors: dailyVisitors.visitors.size,
+    visitors: Array.from(dailyVisitors.visitors.entries()).map(([ip, data]) => ({
+      ip,
+      ...data,
+      firstSeen: data.firstSeen.toISOString(),
+      lastSeen: data.lastSeen.toISOString()
+    }))
+  };
+
+  const reportsDir = path.join(__dirname, 'visitor-reports');
+  if (!fs.existsSync(reportsDir)) {
+    fs.mkdirSync(reportsDir);
+  }
+
+  const filename = path.join(reportsDir, `${dailyVisitors.date.replace(/\s+/g, '-')}.json`);
+  fs.writeFileSync(filename, JSON.stringify(report, null, 2));
+}
+
+// All'avvio del server, carica eventuali dati esistenti
+function loadExistingData() {
+  const reportsDir = path.join(__dirname, 'visitor-reports');
+  if (fs.existsSync(reportsDir)) {
+    const today = new Date().toDateString();
+    const files = fs.readdirSync(reportsDir);
+    
+    files.forEach(file => {
+      if (file.includes(today.replace(/\s+/g, '-'))) {
+        const data = JSON.parse(fs.readFileSync(path.join(reportsDir, file)));
+        data.visitors.forEach(visitor => {
+          dailyVisitors.visitors.set(visitor.ip, {
+            count: visitor.count,
+            firstSeen: new Date(visitor.firstSeen),
+            lastSeen: new Date(visitor.lastSeen),
+            country: visitor.country,
+            userAgent: visitor.userAgent
+          });
+        });
+      }
+    });
+  }
+}
+
+// Avvia il sistema
+loadExistingData();
+
+// Salva i dati all'uscita
+process.on('SIGINT', () => {
+  saveDailyReport();
+  process.exit();
+});
+
+// Aggiungi questa funzione per vedere i visitatori per paese
+app.get('/admin/visitors/by-country', (req, res) => {
+  const byCountry = {};
+  dailyVisitors.visitors.forEach(visitor => {
+    byCountry[visitor.country] = (byCountry[visitor.country] || 0) + 1;
+  });
+  res.json(byCountry);
+});
+
+// Per proteggere gli endpoint admin
+app.use('/admin', (req, res, next) => {
+  const auth = req.headers.authorization;
+  if (auth === 'mason00') {
+    return next();
+  }
+  res.status(401).send('Accesso non autorizzato');
 });
 
 // Aggiungi questo all'inizio del file
