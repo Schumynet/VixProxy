@@ -16,7 +16,43 @@ import axios from 'axios';
 const app = express();
 const PORT = 3000;
 
+app.use((req, res, next) => {
+  // Ottieni l'IP reale (priorità a Cloudflare, poi altri header, infine remoteAddress)
+  const realIp = req.headers['cf-connecting-ip'] || 
+                (req.headers['x-forwarded-for'] ? req.headers['x-forwarded-for'].split(',')[0].trim() : null) || 
+                req.connection.remoteAddress;
 
+  // Ottieni il paese dall'header di Cloudflare (codice ISO a 2 lettere)
+  const country = req.headers['cf-ipcountry'] || 'XX';
+
+  // Mappa alcuni codici paese a nomi completi (puoi estendere questo oggetto)
+  const countryNames = {
+    'IT': 'Italia',
+    'US': 'Stati Uniti',
+    'DE': 'Germania',
+    'FR': 'Francia',
+    'ES': 'Spagna',
+    'GB': 'Regno Unito',
+    'RU': 'Russia',
+    'JP': 'Giappone'
+    // Aggiungi altri paesi se necessario
+  };
+
+  const countryName = countryNames[country] || country;
+
+  // Registra le informazioni
+  console.log(`🌍 Visitatore da ${realIp} (${countryName}) - ${req.method} ${req.url}`);
+
+  // Aggiungi le informazioni alla request per eventuali route successive
+  req.visitorInfo = {
+    ip: realIp,
+    countryCode: country,
+    countryName: countryName,
+    userAgent: req.headers['user-agent']
+  };
+
+  next();
+});
 
 // Aggiungi questo all'inizio del file
 const MAX_RESTARTS = 5;
@@ -46,6 +82,15 @@ app.use((req, res, next) => {
   res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   next();
+});
+
+app.get('/', (req, res) => {
+  res.send(`
+    <h1>Informazioni visitatore</h1>
+    <p><strong>IP:</strong> ${req.visitorInfo.ip}</p>
+    <p><strong>Paese:</strong> ${req.visitorInfo.countryName}</p>
+    <p><strong>Browser:</strong> ${req.visitorInfo.userAgent}</p>
+  `);
 });
 
 app.options('*', (req, res) => {
