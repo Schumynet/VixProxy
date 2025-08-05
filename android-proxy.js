@@ -16,6 +16,62 @@ import axios from 'axios';
 const app = express();
 const PORT = 3000;
 
+
+// Aggiungi questo all'inizio del file
+const MAX_RESTARTS = 5;
+let restarts = 0;
+
+function startServer() {
+  const server = app.listen(PORT, '0.0.0.0', () => {
+    console.log(`📱 Proxy Android attivo su http://0.0.0.0:${PORT}/stream`);
+    restarts = 0; // Reset del contatore dopo avvio riuscito
+  });
+
+  server.on('error', (err) => {
+    console.error('Server error:', err);
+    if (restarts < MAX_RESTARTS) {
+      restarts++;
+      console.log(`Riavvio tentativo ${restarts}/${MAX_RESTARTS}...`);
+      setTimeout(startServer, 2000);
+    }
+  });
+}
+
+// Avvia il server invece di app.listen diretto
+startServer();
+
+
+const puppeteerQueue = [];
+let activePuppeteerTasks = 0;
+const MAX_PARALLEL_TASKS = 2; // Riduci questo numero su Termux
+
+async function runWithPuppeteer(task) {
+  return new Promise((resolve, reject) => {
+    const execute = async () => {
+      activePuppeteerTasks++;
+      try {
+        const result = await task();
+        resolve(result);
+      } catch (err) {
+        reject(err);
+      } finally {
+        activePuppeteerTasks--;
+        if (puppeteerQueue.length > 0) {
+          puppeteerQueue.shift()();
+        }
+      }
+    };
+
+    if (activePuppeteerTasks < MAX_PARALLEL_TASKS) {
+      execute();
+    } else {
+      puppeteerQueue.push(execute);
+    }
+  });
+}
+
+
+
 // ✅ Abilita CORS
 app.use((req, res, next) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -137,12 +193,22 @@ app.get('/proxy/series/:id/:season/:episode', async (req, res) => {
   let browser;
   let page;
   
-  try {
-    browser = await puppeteer.launch({
-      headless: true,
-      executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
-      args: ['--no-sandbox', '--disable-setuid-sandbox']
-    });
+  await runWithPuppeteer(async () => {
+// Modifica la configurazione di Puppeteer per usare meno memoria
+ browser = await puppeteer.launch({
+  headless: true,
+  executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
+  args: [
+    '--no-sandbox',
+    '--disable-setuid-sandbox',
+    '--disable-dev-shm-usage', // Importante per limiti di memoria
+    '--single-process', // Riduce l'uso di memoria
+    '--no-zygote',
+    '--no-first-run'
+  ],
+  ignoreDefaultArgs: ['--disable-extensions']
+});
+
 
     page = await browser.newPage();
     
@@ -187,12 +253,12 @@ app.get('/proxy/series/:id/:season/:episode', async (req, res) => {
     const proxyUrl = getProxyUrl(playlistUrl);
     res.json({ url: proxyUrl });
 
-  } catch (err) {
+  }).catch(async err => {
     console.error('❌ Errore nel proxy serie TV:', err);
     if (page) await page.close().catch(e => console.error('Error closing page:', e));
     if (browser) await browser.close().catch(e => console.error('Error closing browser:', e));
     res.status(500).json({ error: 'Errore durante l\'estrazione dell\'episodio' });
-  }
+  });
 });
 
 
@@ -202,12 +268,20 @@ app.get('/proxy/movie/:id', async (req, res) => {
   let browser;
   let page;
 
-  try {
-    browser = await puppeteer.launch({
-      headless: true,
-      args: ['--no-sandbox', '--disable-setuid-sandbox'],
-      executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined
-    });
+  await runWithPuppeteer(async () => {
+ browser = await puppeteer.launch({
+  headless: true,
+  executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
+  args: [
+    '--no-sandbox',
+    '--disable-setuid-sandbox',
+    '--disable-dev-shm-usage', // Importante per limiti di memoria
+    '--single-process', // Riduce l'uso di memoria
+    '--no-zygote',
+    '--no-first-run'
+  ],
+  ignoreDefaultArgs: ['--disable-extensions']
+});
 
     page = await browser.newPage();
     await page.setExtraHTTPHeaders({ Referer: 'https://vixsrc.to' });
@@ -265,7 +339,7 @@ app.get('/proxy/movie/:id', async (req, res) => {
     const proxyUrl = getProxyUrl(playlistUrl);
     res.json({ url: proxyUrl });
 
-  } catch (err) {
+  }).catch(async err => {
     console.error("❌ Errore nel proxy film:", err);
     
     // Pulizia completa in caso di errore
@@ -280,7 +354,7 @@ app.get('/proxy/movie/:id', async (req, res) => {
       error: 'Errore durante l\'estrazione del flusso',
       details: err.message 
     });
-  }
+  });
 });
 
 
@@ -550,6 +624,4 @@ const rewritten = text
   }
 });
 
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`📱 Proxy Android attivo su http://0.0.0.0:${PORT}/stream`);
-});
+
