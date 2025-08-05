@@ -166,9 +166,7 @@ app.get('/proxy/series/:id/:season/:episode', async (req, res) => {
       headless: true,
       executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
       args: ['--no-sandbox', '--disable-setuid-sandbox',    '--disable-dev-shm-usage', // Importante per limiti di memoria
-    '--single-process', // Riduce l'uso di memoria
-    '--no-zygote',
-    '--no-first-run']
+    '--single-process']
     });
 
     page = await browser.newPage();
@@ -234,9 +232,8 @@ app.get('/proxy/movie/:id', async (req, res) => {
     browser = await puppeteer.launch({
       headless: true,
       args: ['--no-sandbox', '--disable-setuid-sandbox',     '--disable-dev-shm-usage', // Importante per limiti di memoria
-    '--single-process', // Riduce l'uso di memoria
-    '--no-zygote',
-    '--no-first-run'],
+    '--single-process' // Riduce l'uso di memoria
+    ],
       executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined
     });
 
