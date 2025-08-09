@@ -563,9 +563,12 @@ const rewritten = text
     return `https://api.leleflix.store/stream?url=${encodeURIComponent(abs)}`;
   })
   // Riscrive URL assoluti
-  .replace(/(https?:\/\/[^\s\n"]+)/g, match =>
-    `https://api.leleflix.store/stream?url=${encodeURIComponent(match)}`
-  );
+.replace(/(https?:\/\/[^\s\n"]+)/g, match => {
+    if (match.startsWith("https://api.leleflix.store/stream?url=")) {
+        return match; // già riscritto, non toccarlo
+    }
+    return `https://api.leleflix.store/stream?url=${encodeURIComponent(match)}`;
+});
 
 
       res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
@@ -687,9 +690,12 @@ const rewritten = text
     return `https://api.leleflix.store/stream?url=${encodeURIComponent(abs)}`;
   })
   // Riscrive URL assoluti
-  .replace(/(https?:\/\/[^\s\n"]+)/g, match =>
-    `https://api.leleflix.store/stream?url=${encodeURIComponent(match)}`
-  );
+.replace(/(https?:\/\/[^\s\n"]+)/g, match => {
+    if (match.startsWith("https://api.leleflix.store/stream?url=")) {
+        return match; // già riscritto, non toccarlo
+    }
+    return `https://api.leleflix.store/stream?url=${encodeURIComponent(match)}`;
+});
 
 
       res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
