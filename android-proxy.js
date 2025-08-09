@@ -1,12 +1,3 @@
-
-function fetchWithTimeout(resource, options = {}) {
-  const { timeout = 10000 } = options;
-  const controller = new AbortController();
-  const id = setTimeout(() => controller.abort(), timeout);
-  return fetchWithTimeout(resource, { ...options, signal: controller.signal })
-    .finally(() => clearTimeout(id));
-}
-
 // android-proxy.js
 import fs from 'fs';
 import path from 'path';
@@ -24,6 +15,8 @@ import axios from 'axios';
 
 const app = express();
 const PORT = 3000;
+
+axios.defaults.timeout = 15000; // 15 secondi invece di 10
 
 
 // Struttura per memorizzare gli utenti unici del giorno
@@ -169,14 +162,22 @@ function startServer() {
     restarts = 0; // Reset del contatore dopo avvio riuscito
   });
 
-  server.on('error', (err) => {
-    console.error('Server error:', err);
-    if (restarts < MAX_RESTARTS) {
-      restarts++;
-      console.log(`Riavvio tentativo ${restarts}/${MAX_RESTARTS}...`);
-      setTimeout(startServer, 2000);
-    }
-  });
+// Migliora la gestione degli errori del server
+server.on('error', (err) => {
+  if (err.code === 'EADDRINUSE') {
+    console.error(`Porta ${PORT} già in uso`);
+  } else if (err.code === 'ECONNRESET') {
+    console.warn('Connessione resettata dal client');
+  } else {
+    console.error('Errore del server:', err);
+  }
+  
+  if (restarts < MAX_RESTARTS) {
+    restarts++;
+    console.log(`Riavvio tentativo ${restarts}/${MAX_RESTARTS}...`);
+    setTimeout(startServer, 3000);
+  }
+});
 }
 
 // Avvia il server invece di app.listen diretto
@@ -497,7 +498,7 @@ app.get('/proxy/stream/stop', (req, res) => {
 app.get('/proxy/stream', async (req, res) => {
 const targetUrl = req.query.url;
   const streamId = req.query.streamId;
-  
+
   if (!targetUrl || !streamId) {
     return res.status(400).send('Parametri mancanti');
   }
@@ -519,7 +520,7 @@ const targetUrl = req.query.url;
   });
 
     try {
-        const response = await fetchWithTimeout(targetUrl, {
+        const response = await fetch(targetUrl, {
             headers: {
                 'Referer': 'https://vixsrc.to',
                 'User-Agent': 'Mozilla/5.0'
@@ -537,7 +538,9 @@ const targetUrl = req.query.url;
 
   if (isM3U8) {
     try {
-      const response = await fetchWithTimeout(targetUrl, {
+       sendHeaders(200, { 'Content-Type': 'application/vnd.apple.mpegurl' });
+      res.send(rewritten);
+      const response = await fetch(targetUrl, {
         headers: {
           'Referer': 'https://vixsrc.to',
           'User-Agent': 'Mozilla/5.0'
@@ -563,12 +566,9 @@ const rewritten = text
     return `https://api.leleflix.store/stream?url=${encodeURIComponent(abs)}`;
   })
   // Riscrive URL assoluti
-.replace(/(https?:\/\/[^\s\n"]+)/g, match => {
-    if (match.startsWith("https://api.leleflix.store/stream?url=")) {
-        return match; // già riscritto, non toccarlo
-    }
-    return `https://api.leleflix.store/stream?url=${encodeURIComponent(match)}`;
-});
+  .replace(/(https?:\/\/[^\s\n"]+)/g, match =>
+    `https://api.leleflix.store/stream?url=${encodeURIComponent(match)}`
+  );
 
 
       res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
@@ -579,19 +579,30 @@ const rewritten = text
       res.status(500).send('Errore proxy m3u8');
     }
   } else {
+         
+         
     try {
       const urlObj = new URL(targetUrl);
       const client = urlObj.protocol === 'https:' ? https : http;
 
-      const proxyReq = client.get(targetUrl, {
-        headers: {
-          'Referer': 'https://vixsrc.to',
-          'User-Agent': 'Mozilla/5.0'
-        }
-      }, proxyRes => {
+const proxyReq = client.get(targetUrl, {
+  headers: {
+    'Referer': 'https://vixsrc.to',
+    'User-Agent': 'Mozilla/5.0'
+  },
+  timeout: 15000 // Aggiungi timeout esplicito
+}, proxyRes => {
         res.writeHead(proxyRes.statusCode, proxyRes.headers);
         proxyRes.pipe(res);
       });
+
+      proxyReq.on('timeout', () => {
+  proxyReq.destroy();
+  console.error('Timeout nella richiesta a:', targetUrl);
+  if (!res.headersSent) {
+    res.status(504).send('Timeout del gateway');
+  }
+});
 
       proxyReq.on('error', err => {
         console.error('Errore segmenti:', err);
@@ -664,7 +675,7 @@ app.get('/stream', async (req, res) => {
 
   if (isM3U8) {
     try {
-      const response = await fetchWithTimeout(targetUrl, {
+      const response = await fetch(targetUrl, {
         headers: {
           'Referer': 'https://vixsrc.to',
           'User-Agent': 'Mozilla/5.0'
@@ -690,12 +701,9 @@ const rewritten = text
     return `https://api.leleflix.store/stream?url=${encodeURIComponent(abs)}`;
   })
   // Riscrive URL assoluti
-.replace(/(https?:\/\/[^\s\n"]+)/g, match => {
-    if (match.startsWith("https://api.leleflix.store/stream?url=")) {
-        return match; // già riscritto, non toccarlo
-    }
-    return `https://api.leleflix.store/stream?url=${encodeURIComponent(match)}`;
-});
+  .replace(/(https?:\/\/[^\s\n"]+)/g, match =>
+    `https://api.leleflix.store/stream?url=${encodeURIComponent(match)}`
+  );
 
 
       res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
@@ -710,15 +718,24 @@ const rewritten = text
       const urlObj = new URL(targetUrl);
       const client = urlObj.protocol === 'https:' ? https : http;
 
-      const proxyReq = client.get(targetUrl, {
-        headers: {
-          'Referer': 'https://vixsrc.to',
-          'User-Agent': 'Mozilla/5.0'
-        }
-      }, proxyRes => {
+const proxyReq = client.get(targetUrl, {
+  headers: {
+    'Referer': 'https://vixsrc.to',
+    'User-Agent': 'Mozilla/5.0'
+  },
+  timeout: 15000 // Aggiungi timeout esplicito
+}, proxyRes => {
         res.writeHead(proxyRes.statusCode, proxyRes.headers);
         proxyRes.pipe(res);
       });
+
+      proxyReq.on('timeout', () => {
+  proxyReq.destroy();
+  console.error('Timeout nella richiesta a:', targetUrl);
+  if (!res.headersSent) {
+    res.status(504).send('Timeout del gateway');
+  }
+});
 
       proxyReq.on('error', err => {
         console.error('Errore segmenti:', err);
