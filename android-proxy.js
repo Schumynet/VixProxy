@@ -1,3 +1,12 @@
+
+function fetchWithTimeout(resource, options = {}) {
+  const { timeout = 10000 } = options;
+  const controller = new AbortController();
+  const id = setTimeout(() => controller.abort(), timeout);
+  return fetchWithTimeout(resource, { ...options, signal: controller.signal })
+    .finally(() => clearTimeout(id));
+}
+
 // android-proxy.js
 import fs from 'fs';
 import path from 'path';
@@ -510,7 +519,7 @@ const targetUrl = req.query.url;
   });
 
     try {
-        const response = await fetch(targetUrl, {
+        const response = await fetchWithTimeout(targetUrl, {
             headers: {
                 'Referer': 'https://vixsrc.to',
                 'User-Agent': 'Mozilla/5.0'
@@ -528,7 +537,7 @@ const targetUrl = req.query.url;
 
   if (isM3U8) {
     try {
-      const response = await fetch(targetUrl, {
+      const response = await fetchWithTimeout(targetUrl, {
         headers: {
           'Referer': 'https://vixsrc.to',
           'User-Agent': 'Mozilla/5.0'
@@ -652,7 +661,7 @@ app.get('/stream', async (req, res) => {
 
   if (isM3U8) {
     try {
-      const response = await fetch(targetUrl, {
+      const response = await fetchWithTimeout(targetUrl, {
         headers: {
           'Referer': 'https://vixsrc.to',
           'User-Agent': 'Mozilla/5.0'
