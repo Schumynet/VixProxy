@@ -16,7 +16,7 @@ import axios from 'axios';
 const app = express();
 const PORT = 3000;
 
-axios.defaults.timeout = 15000; // 15 secondi invece di 10
+axios.defaults.timeout = 30000; // 15 secondi invece di 10
 
 
 // Struttura per memorizzare gli utenti unici del giorno
@@ -25,8 +25,38 @@ const dailyVisitors = {
   visitors: new Map() // Key: IP, Value: { count, firstSeen, lastSeen, country }
 };
 
-// Middleware per registrare visitatori (ignora richieste .ts)
+// Aggiungi questo middleware all'inizio del tuo server
+const ALLOWED_DOMAINS = [
+  'https://leleflix.store',
+  'https://www.leleflix.store',
+  'http://localhost:3000', // Per sviluppo
+  'http://127.0.0.1:3000'  // Per sviluppo
+];
+
 app.use((req, res, next) => {
+  const origin = req.headers.origin || req.headers.referer;
+  
+  // Permetti richieste senza origin (curl, postman, etc.)
+  if (!origin) return next();
+  
+  // Controlla se l'origin è autorizzata
+  const isAllowed = ALLOWED_DOMAINS.some(domain => 
+    origin.startsWith(domain)
+  );
+  
+  if (!isAllowed) {
+    console.warn(`🚫 Accesso bloccato da: ${origin}`);
+    console.warn(`📧 User-Agent: ${req.headers['user-agent']}`);
+    
+    return res.status(403).json({
+      error: 'Accesso non autorizzato',
+      message: 'Questo proxy è riservato a leleflix.store',
+      your_origin: origin
+    });
+  }
+  
+  next();
+
   if (req.path.endsWith('.ts')) return next(); // Salta per segmenti video
   
   const realIp = req.headers['cf-connecting-ip'] || 
@@ -590,7 +620,7 @@ const proxyReq = client.get(targetUrl, {
     'Referer': 'https://vixsrc.to',
     'User-Agent': 'Mozilla/5.0'
   },
-  timeout: 15000 // Aggiungi timeout esplicito
+  timeout: 30000
 }, proxyRes => {
         res.writeHead(proxyRes.statusCode, proxyRes.headers);
         proxyRes.pipe(res);
@@ -639,8 +669,6 @@ const proxyReq = client.get(targetUrl, {
     }
 });
 
-// Aggiungi timeout a tutte le richieste axios
-axios.defaults.timeout = 10000; // 10 secondi
 
 // Gestione errori globale
 process.on('unhandledRejection', (reason, promise) => {
