@@ -34,11 +34,6 @@ const ALLOWED_DOMAINS = [
 
 ];
 
-const BLOCKED_DOMAINS = [
-  'schumynet.github.io',
-  'leleflixnow.vercel.app'
-];
-
 // Middleware di sicurezza
 app.use((req, res, next) => {
   const origin = req.headers.origin || req.headers.referer || '';
