@@ -24,39 +24,45 @@ const dailyVisitors = {
   date: new Date().toDateString(),
   visitors: new Map() // Key: IP, Value: { count, firstSeen, lastSeen, country }
 };
-
-// Aggiungi questo middleware all'inizio del tuo server
+// Aggiungi questo all'inizio del tuo file, dopo le import
 const ALLOWED_DOMAINS = [
   'https://leleflix.store',
   'https://www.leleflix.store',
-  'http://localhost:3000', // Per sviluppo
-  'http://127.0.0.1:3000'  // Per sviluppo
+  'http://localhost:3000',
+  'http://127.0.0.1:3000'
 ];
 
+const BLOCKED_DOMAINS = [
+  'schumynet.github.io',
+  'leleflixnow.vercel.app'
+];
+
+// Middleware di sicurezza
 app.use((req, res, next) => {
-  const origin = req.headers.origin || req.headers.referer;
+  const origin = req.headers.origin || req.headers.referer || '';
   
-  // Permetti richieste senza origin (curl, postman, etc.)
-  if (!origin) return next();
-  
-  // Controlla se l'origin è autorizzata
-  const isAllowed = ALLOWED_DOMAINS.some(domain => 
-    origin.startsWith(domain)
-  );
-  
-  if (!isAllowed) {
-    console.warn(`🚫 Accesso bloccato da: ${origin}`);
-    console.warn(`📧 User-Agent: ${req.headers['user-agent']}`);
-    
+  // Blocco immediato per domini specifici
+  if (BLOCKED_DOMAINS.some(domain => origin.includes(domain))) {
     return res.status(403).json({
-      error: 'Accesso non autorizzato',
-      message: 'Questo proxy è riservato a leleflix.store',
-      your_origin: origin
+      error: 'Accesso bloccato',
+      message: 'Utilizza leleflix.store per accedere al servizio'
+    });
+  }
+  
+  // Controllo per domini autorizzati
+  if (origin && !ALLOWED_DOMAINS.some(domain => origin.startsWith(domain))) {
+    console.warn(`🔒 Accesso negato da: ${origin}`);
+    return res.status(403).json({
+      error: 'Accesso riservato',
+      message: 'Questo proxy è disponibile solo su leleflix.store'
     });
   }
   
   next();
+});
 
+// Middleware per registrare visitatori (ignora richieste .ts)
+app.use((req, res, next) => {
   if (req.path.endsWith('.ts')) return next(); // Salta per segmenti video
   
   const realIp = req.headers['cf-connecting-ip'] || 
