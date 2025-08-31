@@ -29,7 +29,9 @@ const ALLOWED_DOMAINS = [
   'https://leleflix.store',
   'https://www.leleflix.store',
   'http://localhost:3000',
+  'https://vixsrc.to',
   'http://127.0.0.1:3000'
+
 ];
 
 const BLOCKED_DOMAINS = [
