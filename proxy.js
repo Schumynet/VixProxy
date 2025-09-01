@@ -42,6 +42,212 @@ const dailyVisitors = {
   date: new Date().toDateString(),
   visitors: new Map()
 };
+// === Logging contenuti visualizzati ===
+const dailyContentViews = {
+  date: new Date().toDateString(),
+  views: new Map() // IP -> array di contenuti visualizzati
+};
+
+// Cache per i titoli TMDB per evitare richieste duplicate
+const tmdbTitleCache = new Map();
+
+async function getTMDBTitle(tmdbId, contentType, season = null, episode = null) {
+  const cacheKey = contentType === 'movie' 
+    ? `movie-${tmdbId}` 
+    : `tv-${tmdbId}-${season}-${episode}`;
+    
+  if (tmdbTitleCache.has(cacheKey)) {
+    return tmdbTitleCache.get(cacheKey);
+  }
+  
+  try {
+    if (contentType === 'movie') {
+      const response = await axios.get(
+        `https://api.themoviedb.org/3/movie/${tmdbId}?language=it-IT&api_key=${TMDB_API_KEY}`
+      );
+      const title = response.data.title || response.data.original_title || 'Titolo sconosciuto';
+      tmdbTitleCache.set(cacheKey, title);
+      return title;
+    } else {
+      // Per le serie TV, prima ottieni il titolo della serie
+      const [seriesResponse, episodeResponse] = await Promise.all([
+        axios.get(`https://api.themoviedb.org/3/tv/${tmdbId}?language=it-IT&api_key=${TMDB_API_KEY}`),
+        axios.get(`https://api.themoviedb.org/3/tv/${tmdbId}/season/${season}/episode/${episode}?language=it-IT&api_key=${TMDB_API_KEY}`)
+      ]);
+      
+      const seriesTitle = seriesResponse.data.name || seriesResponse.data.original_name || 'Serie sconosciuta';
+      const episodeTitle = episodeResponse.data.name || `Episodio ${episode}`;
+      const fullTitle = `${seriesTitle} - S${season}E${episode}: ${episodeTitle}`;
+      
+      tmdbTitleCache.set(cacheKey, fullTitle);
+      return fullTitle;
+    }
+  } catch (err) {
+    console.error(`❌ Errore recupero titolo TMDB ${tmdbId}:`, err.message);
+    const fallbackTitle = contentType === 'movie' 
+      ? `Film ${tmdbId}` 
+      : `Serie ${tmdbId} S${season}E${episode}`;
+    tmdbTitleCache.set(cacheKey, fallbackTitle);
+    return fallbackTitle;
+  }
+}
+
+async function logContentView(ip, contentType, tmdbId, season = null, episode = null) {
+  const today = new Date().toDateString();
+  
+  // Reset giornaliero
+  if (dailyContentViews.date !== today) {
+    saveContentViewsReport();
+    dailyContentViews.date = today;
+    dailyContentViews.views = new Map();
+  }
+  
+  if (!dailyContentViews.views.has(ip)) {
+    dailyContentViews.views.set(ip, []);
+  }
+  
+  // Recupera il titolo da TMDB
+  const title = await getTMDBTitle(tmdbId, contentType, season, episode);
+  
+  const viewData = {
+    timestamp: new Date().toISOString(),
+    type: contentType, // 'movie' o 'series'
+    tmdbId: parseInt(tmdbId),
+    title: title,
+    season: season ? parseInt(season) : null,
+    episode: episode ? parseInt(episode) : null
+  };
+  
+  dailyContentViews.views.get(ip).push(viewData);
+  
+  console.log(`📺 [${ip}] Visualizza: ${title}`);
+}
+
+function saveContentViewsReport() {
+  if (dailyContentViews.views.size === 0) return;
+  
+  const report = {
+    date: dailyContentViews.date,
+    totalViews: Array.from(dailyContentViews.views.values()).reduce((acc, views) => acc + views.length, 0),
+    uniqueViewers: dailyContentViews.views.size,
+    viewsByIP: Array.from(dailyContentViews.views.entries()).map(([ip, views]) => ({
+      ip,
+      totalViews: views.length,
+      content: views
+    }))
+  };
+  
+  const reportsDir = path.join(__dirname, 'content-reports');
+  if (!fs.existsSync(reportsDir)) {
+    fs.mkdirSync(reportsDir);
+  }
+  
+  const filename = path.join(reportsDir, `content-${dailyContentViews.date.replace(/\s+/g, '-')}.json`);
+  fs.writeFileSync(filename, JSON.stringify(report, null, 2));
+  console.log(`💾 Report contenuti salvato: ${filename}`);
+}
+
+function loadExistingContentData() {
+  const reportsDir = path.join(__dirname, 'content-reports');
+  if (fs.existsSync(reportsDir)) {
+    const today = new Date().toDateString();
+    const files = fs.readdirSync(reportsDir);
+    files.forEach(file => {
+      if (file.includes(`content-${today.replace(/\s+/g, '-')}`)) {
+        try {
+          const data = JSON.parse(fs.readFileSync(path.join(reportsDir, file)));
+          data.viewsByIP.forEach(viewer => {
+            dailyContentViews.views.set(viewer.ip, viewer.content);
+          });
+          console.log(`📊 Caricati dati contenuti esistenti per oggi`);
+        } catch (err) {
+          console.error('Errore caricamento dati contenuti:', err);
+        }
+      }
+    });
+  }
+}
+
+// Caricare i dati esistenti all'avvio
+loadExistingContentData();
+
+// === Endpoint per visualizzare le statistiche contenuti ===
+
+// Endpoint per vedere tutti i contenuti visualizzati oggi
+app.get('/admin/content-views', (req, res) => {
+  const today = new Date().toDateString();
+  if (dailyContentViews.date !== today) {
+    saveContentViewsReport();
+    dailyContentViews.date = today;
+    dailyContentViews.views = new Map();
+  }
+  
+  const viewsArray = Array.from(dailyContentViews.views.entries()).map(([ip, views]) => ({
+    ip,
+    totalViews: views.length,
+    content: views
+  }));
+  
+  res.json({
+    date: dailyContentViews.date,
+    totalViews: viewsArray.reduce((acc, viewer) => acc + viewer.totalViews, 0),
+    uniqueViewers: dailyContentViews.views.size,
+    viewsByIP: viewsArray
+  });
+});
+
+// Endpoint per vedere i contenuti più visti
+app.get('/admin/content-stats', async (req, res) => {
+  const contentStats = new Map();
+  
+  dailyContentViews.views.forEach(views => {
+    views.forEach(view => {
+      const key = view.type === 'movie' 
+        ? `movie-${view.tmdbId}`
+        : `series-${view.tmdbId}`;
+      
+      if (!contentStats.has(key)) {
+        contentStats.set(key, {
+          type: view.type,
+          tmdbId: view.tmdbId,
+          title: view.title,
+          season: view.season,
+          episode: view.episode,
+          viewCount: 0,
+          uniqueViewers: new Set(),
+          episodes: view.type === 'series' ? new Set() : null
+        });
+      }
+      
+      const stat = contentStats.get(key);
+      stat.viewCount++;
+      
+      // Per le serie TV, traccia anche gli episodi unici
+      if (view.type === 'series') {
+        stat.episodes.add(`S${view.season}E${view.episode}`);
+        // Aggiorna il titolo con quello più recente (per avere il titolo della serie)
+        if (view.title && view.title.includes(' - S')) {
+          stat.title = view.title.split(' - S')[0];
+        }
+      }
+    });
+  });
+  
+  const statsArray = Array.from(contentStats.values())
+    .map(stat => ({
+      ...stat,
+      episodes: stat.episodes ? Array.from(stat.episodes).sort() : null,
+      uniqueViewers: undefined // Rimuoviamo il Set dalla risposta JSON
+    }))
+    .sort((a, b) => b.viewCount - a.viewCount);
+  
+  res.json({
+    date: dailyContentViews.date,
+    mostWatched: statsArray
+  });
+});
+
+// === Modificare gli endpoint proxy per aggiungere il logging ===
 
 app.use((req, res, next) => {
   if (req.path.endsWith('.ts')) return next();
@@ -128,7 +334,9 @@ function loadExistingData() {
 loadExistingData();
 
 process.on('SIGINT', () => {
+  console.log('\n🛑 Arresto del server...');
   saveDailyReport();
+  saveContentViewsReport();
   process.exit();
 });
 
@@ -294,11 +502,21 @@ async function vixsrcPlaylist(tmdbId, seasonNumber, episodeNumber) {
   return playlistUrl.toString();
 }
 
-// === Endpoint proxy con nuova logica ===
 app.get('/proxy/movie/:id', async (req, res) => {
   try {
     const { id } = req.params;
     const playlistUrl = await vixsrcPlaylist(id);
+    
+    // Log della visualizzazione (in background per non rallentare la risposta)
+    const realIp = req.headers['cf-connecting-ip'] ||
+      (req.headers['x-forwarded-for'] ? req.headers['x-forwarded-for'].split(',')[0].trim() : null) ||
+      req.connection.remoteAddress;
+    
+    // Non aspettiamo il completamento del log per non rallentare lo stream
+    logContentView(realIp, 'movie', id).catch(err => 
+      console.error('Errore logging movie:', err)
+    );
+    
     res.json({ url: getProxyUrl(playlistUrl) });
   } catch (err) {
     console.error("❌ Errore proxy movie:", err);
@@ -306,10 +524,22 @@ app.get('/proxy/movie/:id', async (req, res) => {
   }
 });
 
+// SOSTITUIRE l'endpoint /proxy/series/:id/:season/:episode con questo:
 app.get('/proxy/series/:id/:season/:episode', async (req, res) => {
   try {
     const { id, season, episode } = req.params;
     const playlistUrl = await vixsrcPlaylist(id, season, episode);
+    
+    // Log della visualizzazione (in background per non rallentare la risposta)
+    const realIp = req.headers['cf-connecting-ip'] ||
+      (req.headers['x-forwarded-for'] ? req.headers['x-forwarded-for'].split(',')[0].trim() : null) ||
+      req.connection.remoteAddress;
+    
+    // Non aspettiamo il completamento del log per non rallentare lo stream
+    logContentView(realIp, 'series', id, season, episode).catch(err => 
+      console.error('Errore logging series:', err)
+    );
+    
     res.json({ url: getProxyUrl(playlistUrl) });
   } catch (err) {
     console.error("❌ Errore proxy series:", err);
