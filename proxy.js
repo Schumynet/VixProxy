@@ -20,9 +20,11 @@ axios.defaults.timeout = 30000; // timeout 30s
 const ALLOWED_DOMAINS = [
   'https://leleflix.store',
   'https://www.leleflix.store',
-  'http://localhost:3000',
+  'http://localhost:8080',
+  'https://api.leleflix.store',
+
   'https://vixsrc.to',
-  'http://127.0.0.1:3000'
+  'http://192.168.1.17:5500'
 ];
 
 app.use((req, res, next) => {
@@ -685,6 +687,139 @@ app.get('/stream', async (req, res) => {
       console.error('URL invalido:', err);
       res.status(400).send('URL invalido');
     }
+  }
+});
+
+// Aggiungi questa struttura dati in alto, dopo le altre
+const watchProgress = {
+  data: new Map(),
+  lastSave: Date.now()
+};
+
+// Funzione per salvare il progresso su file
+function saveWatchProgress() {
+  const progressData = {
+    timestamp: new Date().toISOString(),
+    progress: Array.from(watchProgress.data.entries())
+  };
+  
+  const progressDir = path.join(__dirname, 'progress-data');
+  if (!fs.existsSync(progressDir)) {
+    fs.mkdirSync(progressDir);
+  }
+  
+  const filename = path.join(progressDir, `progress-${Date.now()}.json`);
+  fs.writeFileSync(filename, JSON.stringify(progressData, null, 2));
+  console.log(`💾 Progresso salvato: ${filename}`);
+  
+  watchProgress.lastSave = Date.now();
+}
+
+// Carica progressi esistenti all'avvio
+function loadExistingProgress() {
+  const progressDir = path.join(__dirname, 'progress-data');
+  if (fs.existsSync(progressDir)) {
+    const files = fs.readdirSync(progressDir).sort().reverse().slice(0, 5); // Ultimi 5 file
+    
+    files.forEach(file => {
+      try {
+        const data = JSON.parse(fs.readFileSync(path.join(progressDir, file)));
+        data.progress.forEach(([key, progressData]) => {
+          watchProgress.data.set(key, progressData);
+        });
+        console.log(`📊 Caricati ${data.progress.length} progressi da ${file}`);
+      } catch (err) {
+        console.error('Errore caricamento progressi:', err);
+      }
+    });
+  }
+}
+
+// Chiama all'avvio
+loadExistingProgress();
+
+// Salva periodicamente il progresso (ogni 5 minuti)
+setInterval(() => {
+  if (watchProgress.data.size > 0) {
+    saveWatchProgress();
+  }
+}, 5 * 60 * 1000);
+
+// Endpoint per salvare il progresso di visualizzazione
+app.post('/progress/save', express.json(), (req, res) => {
+  try {
+    const { ip, tmdbId, contentType, season, episode, currentTime, duration, title } = req.body;
+    
+    if (!ip || !tmdbId || !contentType || !currentTime || !duration) {
+      return res.status(400).json({ error: 'Parametri mancanti' });
+    }
+    
+    const progressKey = `${ip}-${tmdbId}-${contentType}-${season || 0}-${episode || 0}`;
+    const progressPercentage = (currentTime / duration) * 100;
+    
+    // Salva solo se ha guardato almeno il 5% ma non più del 95%
+    if (progressPercentage >= 5 && progressPercentage <= 95) {
+      watchProgress.data.set(progressKey, {
+        ip,
+        tmdbId: parseInt(tmdbId),
+        contentType,
+        season: season ? parseInt(season) : null,
+        episode: episode ? parseInt(episode) : null,
+        currentTime: parseFloat(currentTime),
+        duration: parseFloat(duration),
+        progressPercentage: Math.round(progressPercentage),
+        title: title || 'Senza titolo',
+        lastUpdated: new Date().toISOString()
+      });
+      
+      console.log(`⏱️ Progresso salvato: ${progressKey} - ${progressPercentage}%`);
+    } else if (progressPercentage > 95) {
+      // Rimuovi se ha quasi finito (considerato come completato)
+      watchProgress.data.delete(progressKey);
+      console.log(`✅ Contenuto completato: ${progressKey}`);
+    }
+    
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Errore salvataggio progresso:', err);
+    res.status(500).json({ error: 'Errore interno' });
+  }
+});
+
+// Endpoint per ottenere i progressi di un utente
+app.get('/progress/:ip', (req, res) => {
+  try {
+    const { ip } = req.params;
+    const userProgress = [];
+    
+    watchProgress.data.forEach((value, key) => {
+      if (key.startsWith(`${ip}-`)) {
+        userProgress.push({
+          ...value,
+          id: key
+        });
+      }
+    });
+    
+    // Ordina per ultimo aggiornamento (più recenti prima)
+    userProgress.sort((a, b) => new Date(b.lastUpdated) - new Date(a.lastUpdated));
+    
+    res.json({ progress: userProgress });
+  } catch (err) {
+    console.error('Errore recupero progressi:', err);
+    res.status(500).json({ error: 'Errore interno' });
+  }
+});
+
+// Endpoint per rimuovere un progresso
+app.delete('/progress/:key', (req, res) => {
+  try {
+    const { key } = req.params;
+    const deleted = watchProgress.data.delete(key);
+    res.json({ success: deleted });
+  } catch (err) {
+    console.error('Errore rimozione progresso:', err);
+    res.status(500).json({ error: 'Errore interno' });
   }
 });
 
