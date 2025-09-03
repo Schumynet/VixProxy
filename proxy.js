@@ -20,11 +20,9 @@ axios.defaults.timeout = 30000; // timeout 30s
 const ALLOWED_DOMAINS = [
   'https://leleflix.store',
   'https://www.leleflix.store',
-  'http://localhost:8080',
-  'https://api.leleflix.store',
+    'https://api.leleflix.store',
 
-  'https://vixsrc.to',
-  'http://192.168.1.17:5500'
+  'https://vixsrc.to'
 ];
 
 app.use((req, res, next) => {
@@ -577,25 +575,46 @@ app.get('/proxy/stream', async (req, res) => {
   const targetUrl = req.query.url;
   const streamId = req.query.streamId;
   if (!targetUrl || !streamId) return res.status(400).send('Parametri mancanti');
+  
+  let responded = false;
   const abortController = new AbortController();
   PENDING_REQUESTS.set(streamId, abortController);
-  const cleanup = () => {
-    PENDING_REQUESTS.delete(streamId);
-    res.removeAllListeners('close');
+  
+  const sendResponse = (status, message) => {
+    if (!responded) {
+      responded = true;
+      res.status(status).send(message);
+      PENDING_REQUESTS.delete(streamId);
+    }
   };
-  res.on('close', () => {
-    if (!res.headersSent) abortController.abort();
-    cleanup();
+
+  const cleanup = () => {
+    if (!responded) {
+      responded = true;
+      PENDING_REQUESTS.delete(streamId);
+    }
+  };
+
+  // Gestione chiusura connessione client
+  req.on('close', () => {
+    console.log(`Connessione chiusa per stream ${streamId}`);
+    if (!responded) {
+      abortController.abort();
+      cleanup();
+    }
   });
+
   try {
     const response = await fetch(targetUrl, {
       headers: { 'Referer': 'https://vixsrc.to', 'User-Agent': 'Mozilla/5.0' },
-      signal: abortController.signal
+      signal: abortController.signal,
+      timeout: 10000
     });
-    cleanup();
+    
     if (targetUrl.includes('.m3u8')) {
       let text = await response.text();
       const baseUrl = targetUrl.split('/').slice(0, -1).join('/');
+      
       const rewritten = text
         .replace(/URI="([^"]+)"/g, (m, uri) => {
           const absoluteUrl = uri.startsWith('http') ? uri : uri.startsWith('/')
@@ -606,33 +625,75 @@ app.get('/proxy/stream', async (req, res) => {
           `${getProxyUrl(`${baseUrl}/${file}`)}`
         )
         .replace(/(https?:\/\/[^\s\n"]+)/g, m => getProxyUrl(m));
-      res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
-      res.send(rewritten);
-    } else {
-      const urlObj = new URL(targetUrl);
-      const client = urlObj.protocol === 'https:' ? https : http;
-      const proxyReq = client.get(targetUrl, {
-        headers: { 'Referer': 'https://vixsrc.to', 'User-Agent': 'Mozilla/5.0' },
-        timeout: 30000
-      }, proxyRes => {
-        res.writeHead(proxyRes.statusCode, proxyRes.headers);
-        proxyRes.pipe(res);
-      });
-      proxyReq.on('timeout', () => {
-        proxyReq.destroy();
-        if (!res.headersSent) res.status(504).send('Timeout');
-      });
-      proxyReq.on('error', err => {
-        console.error('Errore stream:', err);
-        res.status(500).send('Errore proxy media');
-      });
-    }
+      
+      if (!responded) {
+        res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
+        res.send(rewritten);
+        responded = true;
+      }
+    // In /stream e /proxy/stream, modifica la parte dei segmenti non-M3U8:
+} else {
+  try {
+    const urlObj = new URL(targetUrl);
+    const client = urlObj.protocol === 'https:' ? https : http;
+    
+    const proxyReq = client.get(targetUrl, {
+      headers: { 
+        'Referer': 'https://vixsrc.to', 
+        'User-Agent': 'Mozilla/5.0',
+        'Accept': '*/*',
+        'Connection': 'keep-alive'
+      },
+      timeout: 10000
+    }, proxyRes => {
+      if (!responded) {
+        // Imposta gli header solo se non già inviati
+        try {
+          res.writeHead(proxyRes.statusCode, proxyRes.headers);
+          proxyRes.pipe(res);
+          responded = true;
+        } catch (pipeError) {
+          console.log('Errore durante il piping della risposta:', pipeError.message);
+        }
+      }
+    });
+    
+    proxyReq.on('timeout', () => {
+      console.log('Timeout segmento:', targetUrl);
+      proxyReq.destroy();
+      sendResponse(504, 'Timeout');
+    });
+    
+    proxyReq.on('error', err => {
+      if (err.code === 'ECONNRESET') {
+        console.log('ECONNRESET segmento:', targetUrl);
+      } else {
+        console.error('Errore segmento:', err.message, 'per:', targetUrl);
+      }
+      sendResponse(500, 'Errore proxy media');
+    });
+    
+    // Gestione chiusura lato client
+    req.on('close', () => {
+      console.log('Client disconnected during segment:', targetUrl);
+      proxyReq.destroy();
+      cleanup();
+    });
+    
   } catch (err) {
-    if (err.name !== 'AbortError') {
-      console.error('Errore proxy:', err);
-      res.status(500).send('Errore durante il proxy');
+    console.error('URL segmento invalido:', err.message);
+    sendResponse(400, 'URL invalido');
+  }
+}
+  } catch (err) {
+    if (err.name === 'AbortError') {
+      console.log(`Richiesta abortita per stream ${streamId}`);
+    } else {
+      console.error(`Errore proxy stream ${streamId}:`, err.message);
+      sendResponse(500, 'Errore durante il proxy');
     }
-    PENDING_REQUESTS.delete(streamId);
+  } finally {
+    cleanup();
   }
 });
 
@@ -640,14 +701,29 @@ app.get('/proxy/stream', async (req, res) => {
 app.get('/stream', async (req, res) => {
   const targetUrl = req.query.url;
   if (!targetUrl) return res.status(400).send('Missing url');
+  
   const isM3U8 = targetUrl.includes('.m3u8') || targetUrl.includes('playlist') || targetUrl.includes('master');
+  
+  // Controllo per prevenire doppie risposte
+  let responded = false;
+  
+  const sendResponse = (status, message) => {
+    if (!responded) {
+      responded = true;
+      res.status(status).send(message);
+    }
+  };
+
   if (isM3U8) {
     try {
       const response = await fetch(targetUrl, {
-        headers: { 'Referer': 'https://vixsrc.to', 'User-Agent': 'Mozilla/5.0' }
+        headers: { 'Referer': 'https://vixsrc.to', 'User-Agent': 'Mozilla/5.0' },
+        timeout: 10000
       });
+      
       let text = await response.text();
       const baseUrl = targetUrl.split('/').slice(0, -1).join('/');
+      
       const rewritten = text
         .replace(/URI="([^"]+)"/g, (m, uri) => {
           const absoluteUrl = uri.startsWith('http') ? uri : uri.startsWith('/')
@@ -658,35 +734,94 @@ app.get('/stream', async (req, res) => {
           `${getProxyUrl(`${baseUrl}/${file}`)}`
         )
         .replace(/(https?:\/\/[^\s\n"]+)/g, m => getProxyUrl(m));
-      res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
-      res.send(rewritten);
+      
+      if (!responded) {
+        res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
+        res.send(rewritten);
+        responded = true;
+      }
     } catch (err) {
-      console.error('Errore fetch m3u8:', err);
-      res.status(500).send('Errore proxy m3u8');
+      console.error('Errore fetch m3u8:', err.message);
+      sendResponse(500, 'Errore proxy m3u8');
     }
+  // In /stream e /proxy/stream, modifica la parte dei segmenti non-M3U8:
+} else {
+  try {
+    const urlObj = new URL(targetUrl);
+    const client = urlObj.protocol === 'https:' ? https : http;
+    
+    const proxyReq = client.get(targetUrl, {
+      headers: { 
+        'Referer': 'https://vixsrc.to', 
+        'User-Agent': 'Mozilla/5.0',
+        'Accept': '*/*',
+        'Connection': 'keep-alive'
+      },
+      timeout: 10000
+    }, proxyRes => {
+      if (!responded) {
+        // Imposta gli header solo se non già inviati
+        try {
+          res.writeHead(proxyRes.statusCode, proxyRes.headers);
+          proxyRes.pipe(res);
+          responded = true;
+        } catch (pipeError) {
+          console.log('Errore durante il piping della risposta:', pipeError.message);
+        }
+      }
+    });
+    
+    proxyReq.on('timeout', () => {
+      console.log('Timeout segmento:', targetUrl);
+      proxyReq.destroy();
+      sendResponse(504, 'Timeout');
+    });
+    
+    proxyReq.on('error', err => {
+      if (err.code === 'ECONNRESET') {
+        console.log('ECONNRESET segmento:', targetUrl);
+      } else {
+        console.error('Errore segmento:', err.message, 'per:', targetUrl);
+      }
+      sendResponse(500, 'Errore proxy media');
+    });
+    
+    // Gestione chiusura lato client
+    req.on('close', () => {
+      console.log('Client disconnected during segment:', targetUrl);
+      proxyReq.destroy();
+      cleanup();
+    });
+    
+  } catch (err) {
+    console.error('URL segmento invalido:', err.message);
+    sendResponse(400, 'URL invalido');
+  }
+}
+});
+
+// Error handling globale
+app.use((err, req, res, next) => {
+  console.error('Errore globale:', err.message);
+  if (!res.headersSent) {
+    res.status(500).json({ error: 'Errore interno del server' });
+  }
+});
+
+// Gestione errori per stream interrotti
+process.on('uncaughtException', (err) => {
+  if (err.code === 'ECONNRESET') {
+    console.log('Connessione resettata a livello di processo');
   } else {
-    try {
-      const urlObj = new URL(targetUrl);
-      const client = urlObj.protocol === 'https:' ? https : http;
-      const proxyReq = client.get(targetUrl, {
-        headers: { 'Referer': 'https://vixsrc.to', 'User-Agent': 'Mozilla/5.0' },
-        timeout: 15000
-      }, proxyRes => {
-        res.writeHead(proxyRes.statusCode, proxyRes.headers);
-        proxyRes.pipe(res);
-      });
-      proxyReq.on('timeout', () => {
-        proxyReq.destroy();
-        if (!res.headersSent) res.status(504).send('Timeout del gateway');
-      });
-      proxyReq.on('error', err => {
-        console.error('Errore segmenti:', err);
-        res.status(500).send('Errore proxy media');
-      });
-    } catch (err) {
-      console.error('URL invalido:', err);
-      res.status(400).send('URL invalido');
-    }
+    console.error('Uncaught Exception:', err.message);
+  }
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  if (reason.code === 'ECONNRESET') {
+    console.log('Promise rejection per ECONNRESET');
+  } else {
+    console.error('Unhandled Rejection:', reason);
   }
 });
 
@@ -710,7 +845,6 @@ function saveWatchProgress() {
   
   const filename = path.join(progressDir, `progress-${Date.now()}.json`);
   fs.writeFileSync(filename, JSON.stringify(progressData, null, 2));
-  console.log(`💾 Progresso salvato: ${filename}`);
   
   watchProgress.lastSave = Date.now();
 }
@@ -757,8 +891,8 @@ app.post('/progress/save', express.json(), (req, res) => {
     const progressKey = `${ip}-${tmdbId}-${contentType}-${season || 0}-${episode || 0}`;
     const progressPercentage = (currentTime / duration) * 100;
     
-    // Salva solo se ha guardato almeno il 5% ma non più del 95%
-    if (progressPercentage >= 5 && progressPercentage <= 95) {
+    // Salva solo se ha guardato almeno il 5% ma non più del 91%
+    if (progressPercentage >= 5 && progressPercentage <= 91) {
       watchProgress.data.set(progressKey, {
         ip,
         tmdbId: parseInt(tmdbId),
@@ -772,8 +906,7 @@ app.post('/progress/save', express.json(), (req, res) => {
         lastUpdated: new Date().toISOString()
       });
       
-      console.log(`⏱️ Progresso salvato: ${progressKey} - ${progressPercentage}%`);
-    } else if (progressPercentage > 95) {
+    } else if (progressPercentage > 91) {
       // Rimuovi se ha quasi finito (considerato come completato)
       watchProgress.data.delete(progressKey);
       console.log(`✅ Contenuto completato: ${progressKey}`);
