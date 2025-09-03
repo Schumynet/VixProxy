@@ -646,20 +646,17 @@ app.get('/proxy/stream', async (req, res) => {
           proxyRes.pipe(res);
           responded = true;
         } catch (pipeError) {
-          console.log('Errore durante il piping della risposta:', pipeError.message);
         }
       }
     });
     
     proxyReq.on('timeout', () => {
-      console.log('Timeout segmento:', targetUrl);
       proxyReq.destroy();
       sendResponse(504, 'Timeout');
     });
     
     proxyReq.on('error', err => {
       if (err.code === 'ECONNRESET') {
-        console.log('ECONNRESET segmento:', targetUrl);
       } else {
         console.error('Errore segmento:', err.message, 'per:', targetUrl);
       }
@@ -668,7 +665,7 @@ app.get('/proxy/stream', async (req, res) => {
     
     // Gestione chiusura lato client
     req.on('close', () => {
-      console.log('Client disconnected during segment:', targetUrl);
+      
       proxyReq.destroy();
       if (!responded) {
         responded = true;
@@ -683,7 +680,6 @@ app.get('/proxy/stream', async (req, res) => {
 }
   } catch (err) {
     if (err.name === 'AbortError') {
-      console.log(`Richiesta abortita per stream ${streamId}`);
     } else {
       console.error(`Errore proxy stream ${streamId}:`, err.message);
       sendResponse(500, 'Errore durante il proxy');
@@ -691,110 +687,7 @@ app.get('/proxy/stream', async (req, res) => {
   }
 });
 
-// === Proxy universale ===
-app.get('/stream', async (req, res) => {
-  const targetUrl = req.query.url;
-  if (!targetUrl) return res.status(400).send('Missing url');
-  
-  const isM3U8 = targetUrl.includes('.m3u8') || targetUrl.includes('playlist') || targetUrl.includes('master');
-  
-  // Controllo per prevenire doppie risposte
-  let responded = false;
-  
-  const sendResponse = (status, message) => {
-    if (!responded) {
-      responded = true;
-      res.status(status).send(message);
-    }
-  };
 
-  if (isM3U8) {
-    try {
-      const response = await fetch(targetUrl, {
-        headers: { 'Referer': 'https://vixsrc.to', 'User-Agent': 'Mozilla/5.0' },
-        timeout: 10000
-      });
-      
-      let text = await response.text();
-      const baseUrl = targetUrl.split('/').slice(0, -1).join('/');
-      
-      const rewritten = text
-        .replace(/URI="([^"]+)"/g, (m, uri) => {
-          const absoluteUrl = uri.startsWith('http') ? uri : uri.startsWith('/')
-            ? `https://vixsrc.to${uri}` : `${baseUrl}/${uri}`;
-          return `URI="${getProxyUrl(absoluteUrl)}"`;
-        })
-        .replace(/^([^\s#"][^\n\r"]+\.(ts|key|m3u8))$/gm, (m, file) =>
-          `${getProxyUrl(`${baseUrl}/${file}`)}`
-        )
-        .replace(/(https?:\/\/[^\s\n"]+)/g, m => getProxyUrl(m));
-      
-      if (!responded) {
-        res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
-        res.send(rewritten);
-        responded = true;
-      }
-    } catch (err) {
-      console.error('Errore fetch m3u8:', err.message);
-      sendResponse(500, 'Errore proxy m3u8');
-    }
-  } else {
-  try {
-    const urlObj = new URL(targetUrl);
-    const client = urlObj.protocol === 'https:' ? https : http;
-    
-    const proxyReq = client.get(targetUrl, {
-      headers: { 
-        'Referer': 'https://vixsrc.to', 
-        'User-Agent': 'Mozilla/5.0',
-        'Accept': '*/*',
-        'Connection': 'keep-alive'
-      },
-      timeout: 10000
-    }, proxyRes => {
-      if (!responded) {
-        // Imposta gli header solo se non già inviati
-        try {
-          res.writeHead(proxyRes.statusCode, proxyRes.headers);
-          proxyRes.pipe(res);
-          responded = true;
-        } catch (pipeError) {
-          console.log('Errore durante il piping della risposta:', pipeError.message);
-        }
-      }
-    });
-    
-    proxyReq.on('timeout', () => {
-      console.log('Timeout segmento:', targetUrl);
-      proxyReq.destroy();
-      sendResponse(504, 'Timeout');
-    });
-    
-    proxyReq.on('error', err => {
-      if (err.code === 'ECONNRESET') {
-        console.log('ECONNRESET segmento:', targetUrl);
-      } else {
-        console.error('Errore segmento:', err.message, 'per:', targetUrl);
-      }
-      sendResponse(500, 'Errore proxy media');
-    });
-    
-    // Gestione chiusura lato client
-    req.on('close', () => {
-      console.log('Client disconnected during segment:', targetUrl);
-      proxyReq.destroy();
-      if (!responded) {
-        responded = true;
-        PENDING_REQUESTS.delete(streamId);
-      }
-    });
-    
-  } catch (err) {
-    console.error('URL segmento invalido:', err.message);
-    sendResponse(400, 'URL invalido');
-  }
-}
-});
 
 // Error handling globale
 app.use((err, req, res, next) => {
