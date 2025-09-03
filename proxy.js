@@ -588,19 +588,13 @@ app.get('/proxy/stream', async (req, res) => {
     }
   };
 
-  const cleanup = () => {
-    if (!responded) {
-      responded = true;
-      PENDING_REQUESTS.delete(streamId);
-    }
-  };
-
   // Gestione chiusura connessione client
   req.on('close', () => {
     console.log(`Connessione chiusa per stream ${streamId}`);
     if (!responded) {
       abortController.abort();
-      cleanup();
+      PENDING_REQUESTS.delete(streamId);
+      responded = true;
     }
   });
 
@@ -631,8 +625,7 @@ app.get('/proxy/stream', async (req, res) => {
         res.send(rewritten);
         responded = true;
       }
-    // In /stream e /proxy/stream, modifica la parte dei segmenti non-M3U8:
-} else {
+    } else {
   try {
     const urlObj = new URL(targetUrl);
     const client = urlObj.protocol === 'https:' ? https : http;
@@ -677,7 +670,10 @@ app.get('/proxy/stream', async (req, res) => {
     req.on('close', () => {
       console.log('Client disconnected during segment:', targetUrl);
       proxyReq.destroy();
-      cleanup();
+      if (!responded) {
+        responded = true;
+        PENDING_REQUESTS.delete(streamId);
+      }
     });
     
   } catch (err) {
@@ -692,8 +688,6 @@ app.get('/proxy/stream', async (req, res) => {
       console.error(`Errore proxy stream ${streamId}:`, err.message);
       sendResponse(500, 'Errore durante il proxy');
     }
-  } finally {
-    cleanup();
   }
 });
 
@@ -744,8 +738,7 @@ app.get('/stream', async (req, res) => {
       console.error('Errore fetch m3u8:', err.message);
       sendResponse(500, 'Errore proxy m3u8');
     }
-  // In /stream e /proxy/stream, modifica la parte dei segmenti non-M3U8:
-} else {
+  } else {
   try {
     const urlObj = new URL(targetUrl);
     const client = urlObj.protocol === 'https:' ? https : http;
@@ -790,7 +783,10 @@ app.get('/stream', async (req, res) => {
     req.on('close', () => {
       console.log('Client disconnected during segment:', targetUrl);
       proxyReq.destroy();
-      cleanup();
+      if (!responded) {
+        responded = true;
+        PENDING_REQUESTS.delete(streamId);
+      }
     });
     
   } catch (err) {
