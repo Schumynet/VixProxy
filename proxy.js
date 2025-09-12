@@ -416,14 +416,19 @@ app.options('*', (req, res) => {
   res.sendStatus(200);
 });
 
-function getProxyUrl(originalUrl) {
+// Sostituisci la funzione getProxyUrl con questa versione corretta
+function getProxyUrl(originalUrl, currentReq = null) {
     // Se l'URL originale già contiene streamId, mantienilo
     if (originalUrl.includes('streamId=')) {
         return `https://api.leleflix.store/stream?url=${encodeURIComponent(originalUrl)}`;
     }
     
     // Altrimenti, aggiungi lo streamId dalla richiesta corrente se disponibile
-    const streamId = req.query.streamId || 'default';
+    let streamId = 'default';
+    if (currentReq && currentReq.query && currentReq.query.streamId) {
+        streamId = currentReq.query.streamId;
+    }
+    
     return `https://api.leleflix.store/stream?url=${encodeURIComponent(originalUrl)}&streamId=${streamId}`;
 }
 
@@ -712,9 +717,10 @@ app.get('/proxy/stream', async (req, res) => {
 
 // === Proxy universale ===
 // === Modifica all'endpoint /stream ===
+// === Modifica all'endpoint /stream ===
 app.get('/stream', async (req, res) => {
   const targetUrl = req.query.url;
-  const streamId = req.query.streamId || 'default'; // Aggiungi default se non presente
+  const streamId = req.query.streamId || 'default';
   
   if (!targetUrl) return res.status(400).send('Missing url');
   
@@ -744,12 +750,12 @@ app.get('/stream', async (req, res) => {
         .replace(/URI="([^"]+)"/g, (m, uri) => {
           const absoluteUrl = uri.startsWith('http') ? uri : uri.startsWith('/')
             ? `https://vixsrc.to${uri}` : `${baseUrl}/${uri}`;
-          return `URI="${getProxyUrl(absoluteUrl)}?streamId=${streamId}"`; // Aggiungi streamId
+          return `URI="${getProxyUrl(absoluteUrl, req)}"`; // Passa req alla funzione
         })
         .replace(/^([^\s#"][^\n\r"]+\.(ts|key|m3u8))$/gm, (m, file) =>
-          `${getProxyUrl(`${baseUrl}/${file}`)}?streamId=${streamId}` // Aggiungi streamId
+          `${getProxyUrl(`${baseUrl}/${file}`, req)}` // Passa req alla funzione
         )
-        .replace(/(https?:\/\/[^\s\n"]+)/g, m => `${getProxyUrl(m)}?streamId=${streamId}`); // Aggiungi streamId
+        .replace(/(https?:\/\/[^\s\n"]+)/g, m => getProxyUrl(m, req)); // Passa req alla funzione
       
       if (!responded) {
         res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
