@@ -25,6 +25,23 @@ const ALLOWED_DOMAINS = [
   'https://vixsrc.to'
 ];
 
+// Gestione degli errori per stream interrotti
+process.on('uncaughtException', (err) => {
+    if (err.code === 'ECONNRESET') {
+        console.log('Connessione client interrotta');
+    } else {
+        console.error('Uncaught Exception:', err.message);
+    }
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+    if (reason.code === 'ECONNRESET') {
+        console.log('Promise rejection per connessione interrotta');
+    } else {
+        console.error('Unhandled Rejection:', reason);
+    }
+});
+
 app.use((req, res, next) => {
   const origin = req.headers.origin || req.headers.referer || '';
   if (origin && !ALLOWED_DOMAINS.some(domain => origin.startsWith(domain))) {
@@ -400,7 +417,14 @@ app.options('*', (req, res) => {
 });
 
 function getProxyUrl(originalUrl) {
-  return `https://api.leleflix.store/stream?url=${encodeURIComponent(originalUrl)}`;
+    // Se l'URL originale già contiene streamId, mantienilo
+    if (originalUrl.includes('streamId=')) {
+        return `https://api.leleflix.store/stream?url=${encodeURIComponent(originalUrl)}`;
+    }
+    
+    // Altrimenti, aggiungi lo streamId dalla richiesta corrente se disponibile
+    const streamId = req.query.streamId || 'default';
+    return `https://api.leleflix.store/stream?url=${encodeURIComponent(originalUrl)}&streamId=${streamId}`;
 }
 
 // === VixSRC Database ===
@@ -687,8 +711,11 @@ app.get('/proxy/stream', async (req, res) => {
 });
 
 // === Proxy universale ===
+// === Modifica all'endpoint /stream ===
 app.get('/stream', async (req, res) => {
   const targetUrl = req.query.url;
+  const streamId = req.query.streamId || 'default'; // Aggiungi default se non presente
+  
   if (!targetUrl) return res.status(400).send('Missing url');
   
   const isM3U8 = targetUrl.includes('.m3u8') || targetUrl.includes('playlist') || targetUrl.includes('master');
@@ -717,12 +744,12 @@ app.get('/stream', async (req, res) => {
         .replace(/URI="([^"]+)"/g, (m, uri) => {
           const absoluteUrl = uri.startsWith('http') ? uri : uri.startsWith('/')
             ? `https://vixsrc.to${uri}` : `${baseUrl}/${uri}`;
-          return `URI="${getProxyUrl(absoluteUrl)}"`;
+          return `URI="${getProxyUrl(absoluteUrl)}?streamId=${streamId}"`; // Aggiungi streamId
         })
         .replace(/^([^\s#"][^\n\r"]+\.(ts|key|m3u8))$/gm, (m, file) =>
-          `${getProxyUrl(`${baseUrl}/${file}`)}`
+          `${getProxyUrl(`${baseUrl}/${file}`)}?streamId=${streamId}` // Aggiungi streamId
         )
-        .replace(/(https?:\/\/[^\s\n"]+)/g, m => getProxyUrl(m));
+        .replace(/(https?:\/\/[^\s\n"]+)/g, m => `${getProxyUrl(m)}?streamId=${streamId}`); // Aggiungi streamId
       
       if (!responded) {
         res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
@@ -734,57 +761,59 @@ app.get('/stream', async (req, res) => {
       sendResponse(500, 'Errore proxy m3u8');
     }
   } else {
-  try {
-    const urlObj = new URL(targetUrl);
-    const client = urlObj.protocol === 'https:' ? https : http;
-    
-    const proxyReq = client.get(targetUrl, {
-      headers: { 
-        'Referer': 'https://vixsrc.to', 
-        'User-Agent': 'Mozilla/5.0',
-        'Accept': '*/*',
-        'Connection': 'keep-alive'
-      },
-      timeout: 10000
-    }, proxyRes => {
-      if (!responded) {
-        // Imposta gli header solo se non già inviati
-        try {
-          res.writeHead(proxyRes.statusCode, proxyRes.headers);
-          proxyRes.pipe(res);
-          responded = true;
-        } catch (pipeError) {
+    try {
+      const urlObj = new URL(targetUrl);
+      const client = urlObj.protocol === 'https:' ? https : http;
+      
+      const proxyReq = client.get(targetUrl, {
+        headers: { 
+          'Referer': 'https://vixsrc.to', 
+          'User-Agent': 'Mozilla/5.0',
+          'Accept': '*/*',
+          'Connection': 'keep-alive'
+        },
+        timeout: 10000
+      }, proxyRes => {
+        if (!responded) {
+          // Imposta gli header solo se non già inviati
+          try {
+            res.writeHead(proxyRes.statusCode, proxyRes.headers);
+            proxyRes.pipe(res);
+            responded = true;
+          } catch (pipeError) {
+            console.error('Errore pipe response:', pipeError.message);
+          }
         }
-      }
-    });
-    
-    proxyReq.on('timeout', () => {
-      proxyReq.destroy();
-      sendResponse(504, 'Timeout');
-    });
-    
-    proxyReq.on('error', err => {
-      if (err.code === 'ECONNRESET') {
-      } else {
-        console.error('Errore segmento:', err.message, 'per:', targetUrl);
-      }
-      sendResponse(500, 'Errore proxy media');
-    });
-    
-    // Gestione chiusura lato client
-    req.on('close', () => {
-      proxyReq.destroy();
-      if (!responded) {
-        responded = true;
-        PENDING_REQUESTS.delete(streamId);
-      }
-    });
-    
-  } catch (err) {
-    console.error('URL segmento invalido:', err.message);
-    sendResponse(400, 'URL invalido');
+      });
+      
+      proxyReq.on('timeout', () => {
+        proxyReq.destroy();
+        sendResponse(504, 'Timeout');
+      });
+      
+      proxyReq.on('error', err => {
+        if (err.code === 'ECONNRESET') {
+          // Connessione chiusa dal client, non è un errore grave
+          console.log('Connessione chiusa dal client per:', targetUrl);
+        } else {
+          console.error('Errore segmento:', err.message, 'per:', targetUrl);
+        }
+        sendResponse(500, 'Errore proxy media');
+      });
+      
+      // Gestione chiusura lato client
+      req.on('close', () => {
+        proxyReq.destroy();
+        if (!responded) {
+          responded = true;
+        }
+      });
+      
+    } catch (err) {
+      console.error('URL segmento invalido:', err.message);
+      sendResponse(400, 'URL invalido');
+    }
   }
-}
 });
 
 // Error handling globale
