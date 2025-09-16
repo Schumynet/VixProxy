@@ -21,9 +21,9 @@ axios.defaults.timeout = 30000; // timeout 30s
 
 // === Sicurezza: domini autorizzati ===
 const ALLOWED_DOMAINS = [
-  'https://leleflix.store',
-  'https://www.leleflix.store',
-    'https://api.leleflix.store',
+  'https://schumynet.github.io',
+  'https://schumynet.github.io/flixe',
+    'https://vixproxy-rip0.onrender.com',
 
   'https://vixsrc.to'
 ];
