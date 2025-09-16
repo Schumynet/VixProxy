@@ -423,7 +423,7 @@ app.options('*', (req, res) => {
 function getProxyUrl(originalUrl, currentReq = null) {
     // Se l'URL originale già contiene streamId, mantienilo
     if (originalUrl.includes('streamId=')) {
-        return `https://api.leleflix.store/stream?url=${encodeURIComponent(originalUrl)}`;
+        return `https://vixproxy-rip0.onrender.com/stream?url=${encodeURIComponent(originalUrl)}`;
     }
     
     // Altrimenti, aggiungi lo streamId dalla richiesta corrente se disponibile
@@ -432,7 +432,7 @@ function getProxyUrl(originalUrl, currentReq = null) {
         streamId = currentReq.query.streamId;
     }
     
-    return `https://api.leleflix.store/stream?url=${encodeURIComponent(originalUrl)}&streamId=${streamId}`;
+    return `https://vixproxy-rip0.onrender.com/stream?url=${encodeURIComponent(originalUrl)}&streamId=${streamId}`;
 }
 
 // === VixSRC Database ===
