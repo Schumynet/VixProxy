@@ -12,7 +12,10 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 const app = express();
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`Server in ascolto sulla porta ${PORT}`);
+});
 
 axios.defaults.timeout = 30000; // timeout 30s
 
