@@ -21,11 +21,11 @@ axios.defaults.timeout = 30000; // timeout 30s
 
 // === Sicurezza: domini autorizzati ===
 const ALLOWED_DOMAINS = [
-  'https://schumynet.github.io',
-  'https://schumynet.github.io/flixe',
-    'https://vixproxy-gu-wra.fly.dev/',
-
-  'https://vixsrc.to'
+   'https://schumynet.github.io',
+   'https://schumynet.github.io/flixe',
+   'https://vixproxy-gu-wra.fly.dev/',
+   'https://flixe-delta.vercel.app/', 
+   'https://vixsrc.to'
 ];
 
 // Gestione degli errori per stream interrotti
