@@ -237,7 +237,7 @@ app.options('*', (req, res) => {
 });
 
 function getProxyUrl(originalUrl) {
-  return `https://api.leleflix.store/stream?url=${encodeURIComponent(originalUrl)}`;
+  return `https://vixproxy-gu-wra.fly.dev//stream?url=${encodeURIComponent(originalUrl)}`;
 }
 
 const TMDB_API_KEY = '1e8c9083f94c62dd66fb2105cd7b613b'; // Inserisci qui la tua chiave TMDb
@@ -591,16 +591,16 @@ const rewritten = text
       : uri.startsWith('/')
         ? `https://vixsrc.to${uri}`
         : `${baseUrl}/${uri}`;
-    return `URI="https://api.leleflix.store/stream?url=${encodeURIComponent(absoluteUrl)}"`;
+    return `URI="https://vixproxy-gu-wra.fly.dev//stream?url=${encodeURIComponent(absoluteUrl)}"`;
   })
   // Riscrive i segmenti .ts, .key o .m3u8 (righe non commentate)
   .replace(/^([^\s#"][^\n\r"]+\.(ts|key|m3u8))$/gm, (match, file) => {
     const abs = `${baseUrl}/${file}`;
-    return `https://api.leleflix.store/stream?url=${encodeURIComponent(abs)}`;
+    return `https://vixproxy-gu-wra.fly.dev//stream?url=${encodeURIComponent(abs)}`;
   })
   // Riscrive URL assoluti
   .replace(/(https?:\/\/[^\s\n"]+)/g, match =>
-    `https://api.leleflix.store/stream?url=${encodeURIComponent(match)}`
+    `https://vixproxy-gu-wra.fly.dev//stream?url=${encodeURIComponent(match)}`
   );
 
 
@@ -724,16 +724,16 @@ const rewritten = text
       : uri.startsWith('/')
         ? `https://vixsrc.to${uri}`
         : `${baseUrl}/${uri}`;
-    return `URI="https://api.leleflix.store/stream?url=${encodeURIComponent(absoluteUrl)}"`;
+    return `URI="https://vixproxy-gu-wra.fly.dev//stream?url=${encodeURIComponent(absoluteUrl)}"`;
   })
   // Riscrive i segmenti .ts, .key o .m3u8 (righe non commentate)
   .replace(/^([^\s#"][^\n\r"]+\.(ts|key|m3u8))$/gm, (match, file) => {
     const abs = `${baseUrl}/${file}`;
-    return `https://api.leleflix.store/stream?url=${encodeURIComponent(abs)}`;
+    return `https://vixproxy-gu-wra.fly.dev//stream?url=${encodeURIComponent(abs)}`;
   })
   // Riscrive URL assoluti
   .replace(/(https?:\/\/[^\s\n"]+)/g, match =>
-    `https://api.leleflix.store/stream?url=${encodeURIComponent(match)}`
+    `https://vixproxy-gu-wra.fly.dev//stream?url=${encodeURIComponent(match)}`
   );
 
 
