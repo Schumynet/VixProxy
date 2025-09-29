@@ -26,8 +26,8 @@ const dailyVisitors = {
 };
 // Aggiungi questo all'inizio del tuo file, dopo le import
 const ALLOWED_DOMAINS = [
-  'https://leleflix.store',
-  'https://www.leleflix.store',
+  'https://flixe-delta.vercel.app',
+  'https://schumynet.github.io',
   'http://localhost:3000',
   'https://vixsrc.to',
   'http://127.0.0.1:3000'
