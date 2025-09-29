@@ -3,9 +3,9 @@
   "version": "1.0.0",
   "description": "Proxy server per flussi HLS da vixsrc.to",
   "type": "module",
-  "main": "android-proxy.js",
+  "main": "proxy.js",
   "scripts": {
-    "start": "node android-proxy.js"
+    "start": "node proxy.js"
   },
   "dependencies": {
     "axios": "^1.10.0",
