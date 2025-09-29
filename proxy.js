@@ -22,8 +22,8 @@ axios.defaults.timeout = 30000; // timeout 30s
 // === Sicurezza: domini autorizzati ===
 const ALLOWED_DOMAINS = [
    'https://schumynet.github.io',
-   'https://schumynet.github.io/flixe',
-   'https://vixproxy-gu-wra.fly.dev/',
+   'https://schumynet.github.io/LeleFlix',
+   'https://vixproxy-kmv2qg.fly.dev/',
    'https://flixe-delta.vercel.app/', 
    'https://vixsrc.to'
 ];
@@ -432,7 +432,7 @@ function getProxyUrl(originalUrl, currentReq = null) {
         streamId = currentReq.query.streamId;
     }
     
-    return `https://vixproxy-gu-wra.fly.dev//stream?url=${encodeURIComponent(originalUrl)}&streamId=${streamId}`;
+    return `https://vixproxy-kmv2qg.fly.dev/stream?url=${encodeURIComponent(originalUrl)}&streamId=${streamId}`;
 }
 
 // === VixSRC Database ===
