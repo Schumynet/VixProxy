@@ -23,7 +23,7 @@ axios.defaults.timeout = 30000; // timeout 30s
 const ALLOWED_DOMAINS = [
   'https://schumynet.github.io',
   'https://schumynet.github.io/flixe',
-    'https://vixproxy-rip0.onrender.com',
+    'https://vixproxy-gu-wra.fly.dev/',
 
   'https://vixsrc.to'
 ];
@@ -51,7 +51,7 @@ app.use((req, res, next) => {
     console.warn(`🔒 Accesso negato da: ${origin}`);
     return res.status(403).json({
       error: 'Accesso riservato',
-      message: 'Questo proxy è disponibile solo su leleflix.store'
+      message: 'Questo proxy è disponibile solo su flixe'
     });
   }
   next();
@@ -423,7 +423,7 @@ app.options('*', (req, res) => {
 function getProxyUrl(originalUrl, currentReq = null) {
     // Se l'URL originale già contiene streamId, mantienilo
     if (originalUrl.includes('streamId=')) {
-        return `https://vixproxy-rip0.onrender.com/stream?url=${encodeURIComponent(originalUrl)}`;
+        return `https://vixproxy-gu-wra.fly.dev/stream?url=${encodeURIComponent(originalUrl)}`;
     }
     
     // Altrimenti, aggiungi lo streamId dalla richiesta corrente se disponibile
@@ -432,7 +432,7 @@ function getProxyUrl(originalUrl, currentReq = null) {
         streamId = currentReq.query.streamId;
     }
     
-    return `https://vixproxy-rip0.onrender.com/stream?url=${encodeURIComponent(originalUrl)}&streamId=${streamId}`;
+    return `https://vixproxy-gu-wra.fly.dev//stream?url=${encodeURIComponent(originalUrl)}&streamId=${streamId}`;
 }
 
 // === VixSRC Database ===
