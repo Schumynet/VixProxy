@@ -13,48 +13,26 @@ const __dirname = dirname(__filename);
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`Server in ascolto sulla porta ${PORT}`);
-});
 
 axios.defaults.timeout = 30000; // timeout 30s
 
-// === Sicurezza: domini autorizzati ===
-const ALLOWED_DOMAINS = [
-   'https://schumynet.github.io',
-   'https://schumynet.github.io/LeleFlix',
-   'https://vixproxy-kmv2qg.fly.dev/',
-   'https://flixe-delta.vercel.app/', 
-   'https://vixsrc.to'
-];
+// === Sicurezza: controllo domini rimosso per accesso libero ===
 
 // Gestione degli errori per stream interrotti
 process.on('uncaughtException', (err) => {
-    if (err.code === 'ECONNRESET') {
-        console.log('Connessione client interrotta');
-    } else {
-        console.error('Uncaught Exception:', err.message);
-    }
+  if (err && err.code === 'ECONNRESET') {
+    console.log('Connessione client interrotta');
+  } else {
+    console.error('Uncaught Exception:', err && err.message ? err.message : err);
+  }
 });
 
 process.on('unhandledRejection', (reason, promise) => {
-    if (reason.code === 'ECONNRESET') {
-        console.log('Promise rejection per connessione interrotta');
-    } else {
-        console.error('Unhandled Rejection:', reason);
-    }
-});
-
-app.use((req, res, next) => {
-  const origin = req.headers.origin || req.headers.referer || '';
-  if (origin && !ALLOWED_DOMAINS.some(domain => origin.startsWith(domain))) {
-    console.warn(`🔒 Accesso negato da: ${origin}`);
-    return res.status(403).json({
-      error: 'Accesso riservato',
-      message: 'Questo proxy è disponibile solo su flixe'
-    });
+  if (reason && reason.code === 'ECONNRESET') {
+    console.log('Promise rejection per connessione interrotta');
+  } else {
+    console.error('Unhandled Rejection:', reason);
   }
-  next();
 });
 
 // === Statistiche visitatori ===
@@ -71,15 +49,17 @@ const dailyContentViews = {
 // Cache per i titoli TMDB per evitare richieste duplicate
 const tmdbTitleCache = new Map();
 
+const TMDB_API_KEY = '1e8c9083f94c62dd66fb2105cd7b613b'; // tieni o sposta in env
+
 async function getTMDBTitle(tmdbId, contentType, season = null, episode = null) {
   const cacheKey = contentType === 'movie' 
     ? `movie-${tmdbId}` 
     : `tv-${tmdbId}-${season}-${episode}`;
-    
+
   if (tmdbTitleCache.has(cacheKey)) {
     return tmdbTitleCache.get(cacheKey);
   }
-  
+
   try {
     if (contentType === 'movie') {
       const response = await axios.get(
@@ -89,21 +69,20 @@ async function getTMDBTitle(tmdbId, contentType, season = null, episode = null) 
       tmdbTitleCache.set(cacheKey, title);
       return title;
     } else {
-      // Per le serie TV, prima ottieni il titolo della serie
       const [seriesResponse, episodeResponse] = await Promise.all([
         axios.get(`https://api.themoviedb.org/3/tv/${tmdbId}?language=it-IT&api_key=${TMDB_API_KEY}`),
         axios.get(`https://api.themoviedb.org/3/tv/${tmdbId}/season/${season}/episode/${episode}?language=it-IT&api_key=${TMDB_API_KEY}`)
       ]);
-      
+
       const seriesTitle = seriesResponse.data.name || seriesResponse.data.original_name || 'Serie sconosciuta';
       const episodeTitle = episodeResponse.data.name || `Episodio ${episode}`;
       const fullTitle = `${seriesTitle} - S${season}E${episode}: ${episodeTitle}`;
-      
+
       tmdbTitleCache.set(cacheKey, fullTitle);
       return fullTitle;
     }
   } catch (err) {
-    console.error(`❌ Errore recupero titolo TMDB ${tmdbId}:`, err.message);
+    console.error(`❌ Errore recupero titolo TMDB ${tmdbId}:`, err && err.message ? err.message : err);
     const fallbackTitle = contentType === 'movie' 
       ? `Film ${tmdbId}` 
       : `Serie ${tmdbId} S${season}E${episode}`;
@@ -114,38 +93,36 @@ async function getTMDBTitle(tmdbId, contentType, season = null, episode = null) 
 
 async function logContentView(ip, contentType, tmdbId, season = null, episode = null) {
   const today = new Date().toDateString();
-  
-  // Reset giornaliero
+
   if (dailyContentViews.date !== today) {
     saveContentViewsReport();
     dailyContentViews.date = today;
     dailyContentViews.views = new Map();
   }
-  
+
   if (!dailyContentViews.views.has(ip)) {
     dailyContentViews.views.set(ip, []);
   }
-  
-  // Recupera il titolo da TMDB
+
   const title = await getTMDBTitle(tmdbId, contentType, season, episode);
-  
+
   const viewData = {
     timestamp: new Date().toISOString(),
-    type: contentType, // 'movie' o 'series'
+    type: contentType,
     tmdbId: parseInt(tmdbId),
     title: title,
     season: season ? parseInt(season) : null,
     episode: episode ? parseInt(episode) : null
   };
-  
+
   dailyContentViews.views.get(ip).push(viewData);
-  
+
   console.log(`📺 [${ip}] Visualizza: ${title}`);
 }
 
 function saveContentViewsReport() {
   if (dailyContentViews.views.size === 0) return;
-  
+
   const report = {
     date: dailyContentViews.date,
     totalViews: Array.from(dailyContentViews.views.values()).reduce((acc, views) => acc + views.length, 0),
@@ -156,12 +133,12 @@ function saveContentViewsReport() {
       content: views
     }))
   };
-  
+
   const reportsDir = path.join(__dirname, 'content-reports');
   if (!fs.existsSync(reportsDir)) {
     fs.mkdirSync(reportsDir);
   }
-  
+
   const filename = path.join(reportsDir, `content-${dailyContentViews.date.replace(/\s+/g, '-')}.json`);
   fs.writeFileSync(filename, JSON.stringify(report, null, 2));
   console.log(`💾 Report contenuti salvato: ${filename}`);
@@ -188,12 +165,9 @@ function loadExistingContentData() {
   }
 }
 
-// Caricare i dati esistenti all'avvio
 loadExistingContentData();
 
 // === Endpoint per visualizzare le statistiche contenuti ===
-
-// Endpoint per vedere tutti i contenuti visualizzati oggi
 app.get('/admin/content-views', (req, res) => {
   const today = new Date().toDateString();
   if (dailyContentViews.date !== today) {
@@ -201,13 +175,13 @@ app.get('/admin/content-views', (req, res) => {
     dailyContentViews.date = today;
     dailyContentViews.views = new Map();
   }
-  
+
   const viewsArray = Array.from(dailyContentViews.views.entries()).map(([ip, views]) => ({
     ip,
     totalViews: views.length,
     content: views
   }));
-  
+
   res.json({
     date: dailyContentViews.date,
     totalViews: viewsArray.reduce((acc, viewer) => acc + viewer.totalViews, 0),
@@ -216,16 +190,15 @@ app.get('/admin/content-views', (req, res) => {
   });
 });
 
-// Endpoint per vedere i contenuti più visti
 app.get('/admin/content-stats', async (req, res) => {
   const contentStats = new Map();
-  
+
   dailyContentViews.views.forEach(views => {
     views.forEach(view => {
       const key = view.type === 'movie' 
         ? `movie-${view.tmdbId}`
         : `series-${view.tmdbId}`;
-      
+
       if (!contentStats.has(key)) {
         contentStats.set(key, {
           type: view.type,
@@ -238,29 +211,27 @@ app.get('/admin/content-stats', async (req, res) => {
           episodes: view.type === 'series' ? new Set() : null
         });
       }
-      
+
       const stat = contentStats.get(key);
       stat.viewCount++;
-      
-      // Per le serie TV, traccia anche gli episodi unici
+
       if (view.type === 'series') {
         stat.episodes.add(`S${view.season}E${view.episode}`);
-        // Aggiorna il titolo con quello più recente (per avere il titolo della serie)
         if (view.title && view.title.includes(' - S')) {
           stat.title = view.title.split(' - S')[0];
         }
       }
     });
   });
-  
+
   const statsArray = Array.from(contentStats.values())
     .map(stat => ({
       ...stat,
       episodes: stat.episodes ? Array.from(stat.episodes).sort() : null,
-      uniqueViewers: undefined // Rimuoviamo il Set dalla risposta JSON
+      uniqueViewers: undefined
     }))
     .sort((a, b) => b.viewCount - a.viewCount);
-  
+
   res.json({
     date: dailyContentViews.date,
     mostWatched: statsArray
@@ -268,7 +239,6 @@ app.get('/admin/content-stats', async (req, res) => {
 });
 
 // === Modificare gli endpoint proxy per aggiungere il logging ===
-
 app.use((req, res, next) => {
   if (req.path.endsWith('.ts')) return next();
   const realIp = req.headers['cf-connecting-ip'] ||
@@ -360,14 +330,6 @@ process.on('SIGINT', () => {
   process.exit();
 });
 
-app.get('/admin/visitors/by-country', (req, res) => {
-  const byCountry = {};
-  dailyVisitors.visitors.forEach(visitor => {
-    byCountry[visitor.country] = (byCountry[visitor.country] || 0) + 1;
-  });
-  res.json(byCountry);
-});
-
 // Protezione admin
 app.use('/admin', (req, res, next) => {
   const auth = req.headers.authorization;
@@ -383,7 +345,7 @@ let restarts = 0;
 
 function startServer() {
   const server = app.listen(PORT, '0.0.0.0', () => {
-    console.log(`📱 Proxy Android attivo su http://0.0.0.0:${PORT}/stream`);
+    console.log(`📱 Proxy attivo su http://0.0.0.0:${PORT}`);
     restarts = 0;
   });
   server.on('error', (err) => {
@@ -407,7 +369,7 @@ startServer();
 app.use((req, res, next) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, Range');
   next();
 });
 
@@ -419,24 +381,7 @@ app.options('*', (req, res) => {
   res.sendStatus(200);
 });
 
-// Sostituisci la funzione getProxyUrl con questa versione corretta
-function getProxyUrl(originalUrl, currentReq = null) {
-    // Se l'URL originale già contiene streamId, mantienilo
-    if (originalUrl.includes('streamId=')) {
-        return `https://vixproxy-gu-wra.fly.dev/stream?url=${encodeURIComponent(originalUrl)}`;
-    }
-    
-    // Altrimenti, aggiungi lo streamId dalla richiesta corrente se disponibile
-    let streamId = 'default';
-    if (currentReq && currentReq.query && currentReq.query.streamId) {
-        streamId = currentReq.query.streamId;
-    }
-    
-    return `https://vixproxy-kmv2qg.fly.dev/stream?url=${encodeURIComponent(originalUrl)}&streamId=${streamId}`;
-}
-
 // === VixSRC Database ===
-const TMDB_API_KEY = '1e8c9083f94c62dd66fb2105cd7b613b';
 const vixCache = {
   movie: { data: null, lastFetch: 0 },
   tv: { data: null, lastFetch: 0 }
@@ -464,7 +409,7 @@ async function fetchVixDatabase(type) {
   }
 }
 
-// Endpoint home
+// === Home endpoints
 app.get('/home/available', async (req, res) => {
   try {
     const [moviesRes, tvRes] = await Promise.all([
@@ -538,41 +483,36 @@ app.get('/proxy/movie/:id', async (req, res) => {
   try {
     const { id } = req.params;
     const playlistUrl = await vixsrcPlaylist(id);
-    
-    // Log della visualizzazione (in background per non rallentare la risposta)
+
     const realIp = req.headers['cf-connecting-ip'] ||
       (req.headers['x-forwarded-for'] ? req.headers['x-forwarded-for'].split(',')[0].trim() : null) ||
       req.connection.remoteAddress;
-    
-    // Non aspettiamo il completamento del log per non rallentare lo stream
+
     logContentView(realIp, 'movie', id).catch(err => 
       console.error('Errore logging movie:', err)
     );
-    
-    res.json({ url: getProxyUrl(playlistUrl) });
+
+    res.json({ url: getProxyUrl(playlistUrl, req) });
   } catch (err) {
     console.error("❌ Errore proxy movie:", err);
     res.status(500).json({ error: "Errore estrazione film" });
   }
 });
 
-// SOSTITUIRE l'endpoint /proxy/series/:id/:season/:episode con questo:
 app.get('/proxy/series/:id/:season/:episode', async (req, res) => {
   try {
     const { id, season, episode } = req.params;
     const playlistUrl = await vixsrcPlaylist(id, season, episode);
-    
-    // Log della visualizzazione (in background per non rallentare la risposta)
+
     const realIp = req.headers['cf-connecting-ip'] ||
       (req.headers['x-forwarded-for'] ? req.headers['x-forwarded-for'].split(',')[0].trim() : null) ||
       req.connection.remoteAddress;
-    
-    // Non aspettiamo il completamento del log per non rallentare lo stream
+
     logContentView(realIp, 'series', id, season, episode).catch(err => 
       console.error('Errore logging series:', err)
     );
-    
-    res.json({ url: getProxyUrl(playlistUrl) });
+
+    res.json({ url: getProxyUrl(playlistUrl, req) });
   } catch (err) {
     console.error("❌ Errore proxy series:", err);
     res.status(500).json({ error: "Errore estrazione episodio" });
@@ -583,20 +523,37 @@ app.get('/proxy/series/:id/:season/:episode', async (req, res) => {
 const activeStreams = new Map();
 const PENDING_REQUESTS = new Map();
 
+// Helper getProxyUrl
+function getProxyUrl(originalUrl, currentReq = null) {
+  if (originalUrl.includes('streamId=')) {
+    return `https://vixproxy-gu-wra.fly.dev/stream?url=${encodeURIComponent(originalUrl)}`;
+  }
+
+  let streamId = 'default';
+  if (currentReq && currentReq.query && currentReq.query.streamId) {
+    streamId = currentReq.query.streamId;
+  }
+
+  return `https://vixproxy-kmv2qg.fly.dev/stream?url=${encodeURIComponent(originalUrl)}&streamId=${streamId}`;
+}
+
+// /proxy/stream stop
 app.get('/proxy/stream/stop', (req, res) => {
   const { streamId } = req.query;
   if (!streamId) return res.status(400).json({ error: 'Stream ID mancante' });
   const activeStream = activeStreams.get(streamId);
   if (activeStream) {
     console.log(`🛑 Stop flusso ${streamId}`);
-    activeStream.destroy();
+    if (activeStream.destroy) {
+      try { activeStream.destroy(); } catch(e) {}
+    }
     activeStreams.delete(streamId);
     return res.json({ success: true });
   }
   const pendingRequest = PENDING_REQUESTS.get(streamId);
   if (pendingRequest) {
     console.log(`⏹ Cancello pending ${streamId}`);
-    pendingRequest.abort();
+    try { pendingRequest.abort(); } catch(e) {}
     PENDING_REQUESTS.delete(streamId);
     return res.json({ success: true });
   }
@@ -607,135 +564,124 @@ app.get('/proxy/stream', async (req, res) => {
   const targetUrl = req.query.url;
   const streamId = req.query.streamId;
   if (!targetUrl || !streamId) return res.status(400).send('Parametri mancanti');
-  
+
   let responded = false;
   const abortController = new AbortController();
   PENDING_REQUESTS.set(streamId, abortController);
-  
+
   const sendResponse = (status, message) => {
     if (!responded) {
       responded = true;
-      res.status(status).send(message);
+      try { res.status(status).send(message); } catch(e) {}
       PENDING_REQUESTS.delete(streamId);
     }
   };
 
-  // Gestione chiusura connessione client
-  req.on('close', () => {
-    if (!responded) {
-      abortController.abort();
+  // Timeout per la richiesta upstream
+  const timeoutMs = 30000;
+  const timeout = setTimeout(() => {
+    sendResponse(504, 'Gateway timeout');
+    if (PENDING_REQUESTS.has(streamId)) {
+      const ctrl = PENDING_REQUESTS.get(streamId);
+      try { ctrl.abort(); } catch(e) {}
       PENDING_REQUESTS.delete(streamId);
-      responded = true;
     }
-  });
+  }, timeoutMs);
 
   try {
-    const response = await fetch(targetUrl, {
-      headers: { 'Referer': 'https://vixsrc.to', 'User-Agent': 'Mozilla/5.0' },
-      signal: abortController.signal,
-      timeout: 10000
+    // Prepara la richiesta upstream
+    const headers = {
+      'User-Agent': req.headers['user-agent'] || 'Mozilla/5.0',
+      'Referer': req.headers['referer'] || '',
+      'Accept': '*/*',
+      'Range': req.headers['range'] || undefined
+    };
+
+    const response = await axios.get(targetUrl, {
+      responseType: 'stream',
+      headers,
+      timeout: timeoutMs,
+      signal: abortController.signal
     });
-    
-    if (targetUrl.includes('.m3u8')) {
-      let text = await response.text();
-      const baseUrl = targetUrl.split('/').slice(0, -1).join('/');
-      
-      const rewritten = text
-        .replace(/URI="([^"]+)"/g, (m, uri) => {
-          const absoluteUrl = uri.startsWith('http') ? uri : uri.startsWith('/')
-            ? `https://vixsrc.to${uri}` : `${baseUrl}/${uri}`;
-          return `URI="${getProxyUrl(absoluteUrl)}"`;
-        })
-        .replace(/^([^\s#"][^\n\r"]+\.(ts|key|m3u8))$/gm, (m, file) =>
-          `${getProxyUrl(`${baseUrl}/${file}`)}`
-        )
-        .replace(/(https?:\/\/[^\s\n"]+)/g, m => getProxyUrl(m));
-      
-      if (!responded) {
-        res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
-        res.send(rewritten);
-        responded = true;
-      }
-    } else {
-  try {
-    const urlObj = new URL(targetUrl);
-    const client = urlObj.protocol === 'https:' ? https : http;
-    
-    const proxyReq = client.get(targetUrl, {
-      headers: { 
-        'Referer': 'https://vixsrc.to', 
-        'User-Agent': 'Mozilla/5.0',
-        'Accept': '*/*',
-        'Connection': 'keep-alive'
-      },
-      timeout: 10000
-    }, proxyRes => {
-      if (!responded) {
-        // Imposta gli header solo se non già inviati
-        try {
-          res.writeHead(proxyRes.statusCode, proxyRes.headers);
-          proxyRes.pipe(res);
-          responded = true;
-        } catch (pipeError) {
-        }
+
+    clearTimeout(timeout);
+    PENDING_REQUESTS.delete(streamId);
+
+    // Copia gli header utili verso il client
+    const hopByHop = new Set([
+      'transfer-encoding', 'keep-alive', 'connection', 'proxy-authenticate',
+      'proxy-authorization', 'te', 'trailers', 'upgrade'
+    ]);
+    Object.entries(response.headers).forEach(([k, v]) => {
+      if (!hopByHop.has(k.toLowerCase())) {
+        res.setHeader(k, v);
       }
     });
-    
-    proxyReq.on('timeout', () => {
-      proxyReq.destroy();
-      sendResponse(504, 'Timeout');
-    });
-    
-    proxyReq.on('error', err => {
-      if (err.code === 'ECONNRESET') {
-      } else {
-        console.error('Errore segmento:', err.message, 'per:', targetUrl);
-      }
-      sendResponse(500, 'Errore proxy media');
-    });
-    
-    // Gestione chiusura lato client
+
+    // Imposta header CORS già definiti globalmente ma li ripetiamo per sicurezza
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Range');
+
+    // Gestione stream attivo
+    activeStreams.set(streamId, response.data);
+
+    // Quando il client chiude la connessione, terminare lo stream upstream
     req.on('close', () => {
-      
-      proxyReq.destroy();
-      if (!responded) {
-        responded = true;
-        PENDING_REQUESTS.delete(streamId);
+      const s = activeStreams.get(streamId);
+      if (s && s.destroy) {
+        try { s.destroy(); } catch (e) {}
       }
+      activeStreams.delete(streamId);
     });
-    
+
+    // Pipe dello stream upstream al client
+    response.data.on('error', (err) => {
+      console.error(`Errore stream upstream (${streamId}):`, err.message || err);
+      if (!responded) {
+        sendResponse(502, 'Bad Gateway');
+      }
+      if (activeStreams.has(streamId)) activeStreams.delete(streamId);
+    });
+
+    res.status(response.status);
+    response.data.pipe(res);
+
+    response.data.on('end', () => {
+      activeStreams.delete(streamId);
+    });
+
   } catch (err) {
-    console.error('URL segmento invalido:', err.message);
-    sendResponse(400, 'URL invalido');
-  }
-}
-  } catch (err) {
-    if (err.name === 'AbortError') {
-    } else {
-      console.error(`Errore proxy stream ${streamId}:`, err.message);
-      sendResponse(500, 'Errore durante il proxy');
+    clearTimeout(timeout);
+    PENDING_REQUESTS.delete(streamId);
+    console.error(`❌ Errore fetch stream (${streamId}):`, err && err.message ? err.message : err);
+    if (!responded) {
+      if (err.code === 'ERR_CANCELED' || err.name === 'CanceledError') {
+        sendResponse(499, 'Client Closed Request');
+      } else if (err.response && err.response.status) {
+        sendResponse(err.response.status, err.response.statusText || 'Upstream error');
+      } else {
+        sendResponse(500, 'Errore interno stream proxy');
+      }
     }
   }
 });
 
-// === Proxy universale ===
-// === Modifica all'endpoint /stream ===
-// === Modifica all'endpoint /stream ===
+// === Proxy universale (/stream) ===
 app.get('/stream', async (req, res) => {
   const targetUrl = req.query.url;
   const streamId = req.query.streamId || 'default';
-  
+
   if (!targetUrl) return res.status(400).send('Missing url');
-  
+
   const isM3U8 = targetUrl.includes('.m3u8') || targetUrl.includes('playlist') || targetUrl.includes('master');
-  
-  // Controllo per prevenire doppie risposte
+
   let responded = false;
-  
+
   const sendResponse = (status, message) => {
     if (!responded) {
       responded = true;
-      res.status(status).send(message);
+      try { res.status(status).send(message); } catch(e) {}
     }
   };
 
@@ -745,35 +691,35 @@ app.get('/stream', async (req, res) => {
         headers: { 'Referer': 'https://vixsrc.to', 'User-Agent': 'Mozilla/5.0' },
         timeout: 10000
       });
-      
+
       let text = await response.text();
       const baseUrl = targetUrl.split('/').slice(0, -1).join('/');
-      
+
       const rewritten = text
         .replace(/URI="([^"]+)"/g, (m, uri) => {
           const absoluteUrl = uri.startsWith('http') ? uri : uri.startsWith('/')
             ? `https://vixsrc.to${uri}` : `${baseUrl}/${uri}`;
-          return `URI="${getProxyUrl(absoluteUrl, req)}"`; // Passa req alla funzione
+          return `URI="${getProxyUrl(absoluteUrl, req)}"`;
         })
         .replace(/^([^\s#"][^\n\r"]+\.(ts|key|m3u8))$/gm, (m, file) =>
-          `${getProxyUrl(`${baseUrl}/${file}`, req)}` // Passa req alla funzione
+          `${getProxyUrl(`${baseUrl}/${file}`, req)}`
         )
-        .replace(/(https?:\/\/[^\s\n"]+)/g, m => getProxyUrl(m, req)); // Passa req alla funzione
-      
+        .replace(/(https?:\/\/[^\s\n"]+)/g, m => getProxyUrl(m, req));
+
       if (!responded) {
         res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
         res.send(rewritten);
         responded = true;
       }
     } catch (err) {
-      console.error('Errore fetch m3u8:', err.message);
+      console.error('Errore fetch m3u8:', err && err.message ? err.message : err);
       sendResponse(500, 'Errore proxy m3u8');
     }
   } else {
     try {
       const urlObj = new URL(targetUrl);
       const client = urlObj.protocol === 'https:' ? https : http;
-      
+
       const proxyReq = client.get(targetUrl, {
         headers: { 
           'Referer': 'https://vixsrc.to', 
@@ -784,7 +730,6 @@ app.get('/stream', async (req, res) => {
         timeout: 10000
       }, proxyRes => {
         if (!responded) {
-          // Imposta gli header solo se non già inviati
           try {
             res.writeHead(proxyRes.statusCode, proxyRes.headers);
             proxyRes.pipe(res);
@@ -794,30 +739,28 @@ app.get('/stream', async (req, res) => {
           }
         }
       });
-      
+
       proxyReq.on('timeout', () => {
         proxyReq.destroy();
         sendResponse(504, 'Timeout');
       });
-      
+
       proxyReq.on('error', err => {
         if (err.code === 'ECONNRESET') {
-          // Connessione chiusa dal client, non è un errore grave
           console.log('Connessione chiusa dal client per:', targetUrl);
         } else {
           console.error('Errore segmento:', err.message, 'per:', targetUrl);
         }
         sendResponse(500, 'Errore proxy media');
       });
-      
-      // Gestione chiusura lato client
+
       req.on('close', () => {
         proxyReq.destroy();
         if (!responded) {
           responded = true;
         }
       });
-      
+
     } catch (err) {
       console.error('URL segmento invalido:', err.message);
       sendResponse(400, 'URL invalido');
@@ -827,57 +770,55 @@ app.get('/stream', async (req, res) => {
 
 // Error handling globale
 app.use((err, req, res, next) => {
-  console.error('Errore globale:', err.message);
+  console.error('Errore globale:', err && err.message ? err.message : err);
   if (!res.headersSent) {
     res.status(500).json({ error: 'Errore interno del server' });
   }
 });
 
-// Gestione errori per stream interrotti
+// Gestione errori per stream interrotti (duplicati silenziati)
 process.on('uncaughtException', (err) => {
-  if (err.code === 'ECONNRESET') {
+  if (err && err.code === 'ECONNRESET') {
   } else {
-    console.error('Uncaught Exception:', err.message);
+    console.error('Uncaught Exception:', err && err.message ? err.message : err);
   }
 });
 
 process.on('unhandledRejection', (reason, promise) => {
-  if (reason.code === 'ECONNRESET') {
+  if (reason && reason.code === 'ECONNRESET') {
   } else {
     console.error('Unhandled Rejection:', reason);
   }
 });
 
-// Aggiungi questa struttura dati in alto, dopo le altre
+// Watch progress
 const watchProgress = {
   data: new Map(),
   lastSave: Date.now()
 };
 
-// Funzione per salvare il progresso su file
 function saveWatchProgress() {
   const progressData = {
     timestamp: new Date().toISOString(),
     progress: Array.from(watchProgress.data.entries())
   };
-  
+
   const progressDir = path.join(__dirname, 'progress-data');
   if (!fs.existsSync(progressDir)) {
     fs.mkdirSync(progressDir);
   }
-  
+
   const filename = path.join(progressDir, `progress-${Date.now()}.json`);
   fs.writeFileSync(filename, JSON.stringify(progressData, null, 2));
-  
+
   watchProgress.lastSave = Date.now();
 }
 
-// Carica progressi esistenti all'avvio
 function loadExistingProgress() {
   const progressDir = path.join(__dirname, 'progress-data');
   if (fs.existsSync(progressDir)) {
     const files = fs.readdirSync(progressDir).sort().reverse().slice(0, 5); // Ultimi 5 file
-    
+
     files.forEach(file => {
       try {
         const data = JSON.parse(fs.readFileSync(path.join(progressDir, file)));
@@ -892,10 +833,8 @@ function loadExistingProgress() {
   }
 }
 
-// Chiama all'avvio
 loadExistingProgress();
 
-// Salva periodicamente il progresso (ogni 5 minuti)
 setInterval(() => {
   if (watchProgress.data.size > 0) {
     saveWatchProgress();
@@ -906,15 +845,14 @@ setInterval(() => {
 app.post('/progress/save', express.json(), (req, res) => {
   try {
     const { ip, tmdbId, contentType, season, episode, currentTime, duration, title } = req.body;
-    
+
     if (!ip || !tmdbId || !contentType || !currentTime || !duration) {
       return res.status(400).json({ error: 'Parametri mancanti' });
     }
-    
+
     const progressKey = `${ip}-${tmdbId}-${contentType}-${season || 0}-${episode || 0}`;
     const progressPercentage = (currentTime / duration) * 100;
-    
-    // Salva solo se ha guardato almeno il 5% ma non più del 91%
+
     if (progressPercentage >= 5 && progressPercentage <= 91) {
       watchProgress.data.set(progressKey, {
         ip,
@@ -928,13 +866,12 @@ app.post('/progress/save', express.json(), (req, res) => {
         title: title || 'Senza titolo',
         lastUpdated: new Date().toISOString()
       });
-      
+
     } else if (progressPercentage > 91) {
-      // Rimuovi se ha quasi finito (considerato come completato)
       watchProgress.data.delete(progressKey);
       console.log(`✅ Contenuto completato: ${progressKey}`);
     }
-    
+
     res.json({ success: true });
   } catch (err) {
     console.error('Errore salvataggio progresso:', err);
@@ -942,12 +879,11 @@ app.post('/progress/save', express.json(), (req, res) => {
   }
 });
 
-// Endpoint per ottenere i progressi di un utente
 app.get('/progress/:ip', (req, res) => {
   try {
     const { ip } = req.params;
     const userProgress = [];
-    
+
     watchProgress.data.forEach((value, key) => {
       if (key.startsWith(`${ip}-`)) {
         userProgress.push({
@@ -956,10 +892,10 @@ app.get('/progress/:ip', (req, res) => {
         });
       }
     });
-    
+
     // Ordina per ultimo aggiornamento (più recenti prima)
     userProgress.sort((a, b) => new Date(b.lastUpdated) - new Date(a.lastUpdated));
-    
+
     res.json({ progress: userProgress });
   } catch (err) {
     console.error('Errore recupero progressi:', err);
@@ -967,7 +903,6 @@ app.get('/progress/:ip', (req, res) => {
   }
 });
 
-// Endpoint per rimuovere un progresso
 app.delete('/progress/:key', (req, res) => {
   try {
     const { key } = req.params;
@@ -979,7 +914,7 @@ app.delete('/progress/:key', (req, res) => {
   }
 });
 
-// === Error handling globale ===
+// Final global handlers
 process.on('unhandledRejection', (reason, promise) => {
   console.error('Unhandled Rejection:', reason);
 });
